@@ -17,6 +17,11 @@ const Classes = () => {
   const [newGrade, setNewGrade] = useState("");
   const { toast } = useToast();
 
+  // Rename state
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameId, setRenameId] = useState<string | null>(null);
+  const [renameName, setRenameName] = useState("");
+
   const filtered = classes.filter(
     (c) => c.name.includes(search) || c.grade.includes(search)
   );
@@ -40,6 +45,20 @@ const Classes = () => {
   const handleDelete = (id: string) => {
     setClasses(classes.filter((c) => c.id !== id));
     toast({ title: "已删除", description: "班级已移除" });
+  };
+
+  const openRename = (cls: ClassInfo) => {
+    setRenameId(cls.id);
+    setRenameName(cls.name);
+    setRenameOpen(true);
+  };
+
+  const handleRename = () => {
+    if (!renameName.trim() || !renameId) return;
+    setClasses(classes.map((c) => c.id === renameId ? { ...c, name: renameName.trim() } : c));
+    setRenameOpen(false);
+    setRenameId(null);
+    toast({ title: "成功", description: "班级已重命名" });
   };
 
   return (
@@ -93,7 +112,10 @@ const Classes = () => {
                 <GraduationCap className="w-6 h-6 text-primary-foreground" />
               </div>
               <div className="flex gap-1">
-                <button className="p-2 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors">
+                <button
+                  onClick={() => openRename(cls)}
+                  className="p-2 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+                >
                   <Pencil className="w-4 h-4" />
                 </button>
                 <button
@@ -113,6 +135,25 @@ const Classes = () => {
           </div>
         ))}
       </div>
+
+      {/* Rename Dialog */}
+      <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>重命名班级</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>班级名称</Label>
+              <Input value={renameName} onChange={(e) => setRenameName(e.target.value)} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRenameOpen(false)}>取消</Button>
+            <Button onClick={handleRename} className="gradient-primary text-primary-foreground border-0">保存</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
