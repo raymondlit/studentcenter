@@ -1,6 +1,7 @@
-import { useState } from "react";
-import { mockQuestions, Question } from "@/lib/mock-data";
-import { Plus, Search, FileQuestion, CheckCircle2, Circle } from "lucide-react";
+import { useState, useEffect } from "react";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
+import { Plus, Search, FileQuestion, CheckCircle2, Circle, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -13,8 +14,19 @@ import { useToast } from "@/hooks/use-toast";
 
 const optionLabels = ["A", "B", "C", "D"];
 
+interface QuestionRow {
+  id: string;
+  title: string;
+  type: string;
+  options: string[];
+  correct_answer: number;
+  category: string;
+  created_at: string;
+}
+
 const Questions = () => {
-  const [questions, setQuestions] = useState<Question[]>(mockQuestions);
+  const { user } = useAuth();
+  const [questions, setQuestions] = useState<QuestionRow[]>([]);
   const [search, setSearch] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [newTitle, setNewTitle] = useState("");
@@ -23,28 +35,37 @@ const Questions = () => {
   const [newCategory, setNewCategory] = useState("");
   const { toast } = useToast();
 
+  const fetchQuestions = async () => {
+    const { data } = await supabase.from("questions").select("*").order("created_at", { ascending: false });
+    setQuestions((data || []).map((q: any) => ({ ...q, options: q.options || [] })));
+  };
+
+  useEffect(() => { fetchQuestions(); }, []);
+
   const filtered = questions.filter(
     (q) => q.title.includes(search) || q.category.includes(search)
   );
 
-  const handleAdd = () => {
-    if (!newTitle) return;
-    const q: Question = {
-      id: Date.now().toString(),
+  const handleAdd = async () => {
+    if (!newTitle || !user) return;
+    const { error } = await supabase.from("questions").insert({
+      user_id: user.id,
       title: newTitle,
       type: "single",
       options: newOptions.filter(Boolean),
-      correctAnswer: newCorrect,
+      correct_answer: newCorrect,
       category: newCategory || "未分类",
-      createdAt: new Date().toISOString().split("T")[0],
-    };
-    setQuestions([...questions, q]);
-    setNewTitle("");
-    setNewOptions(["", "", "", ""]);
-    setNewCorrect(0);
-    setNewCategory("");
-    setDialogOpen(false);
+    });
+    if (error) { toast({ title: "错误", description: error.message, variant: "destructive" }); return; }
+    setNewTitle(""); setNewOptions(["", "", "", ""]); setNewCorrect(0); setNewCategory(""); setDialogOpen(false);
     toast({ title: "成功", description: "题目已添加" });
+    fetchQuestions();
+  };
+
+  const handleDelete = async (id: string) => {
+    await supabase.from("questions").delete().eq("id", id);
+    toast({ title: "已删除", description: "题目已移除" });
+    fetchQuestions();
   };
 
   return (
@@ -61,9 +82,7 @@ const Questions = () => {
             </Button>
           </DialogTrigger>
           <DialogContent className="max-w-lg">
-            <DialogHeader>
-              <DialogTitle>新建选择题</DialogTitle>
-            </DialogHeader>
+            <DialogHeader><DialogTitle>新建选择题</DialogTitle></DialogHeader>
             <div className="space-y-4 py-4">
               <div className="space-y-2">
                 <Label>题目内容</Label>
@@ -77,25 +96,10 @@ const Questions = () => {
                 <Label>选项（点击设为正确答案）</Label>
                 {newOptions.map((opt, i) => (
                   <div key={i} className="flex items-center gap-2">
-                    <button
-                      onClick={() => setNewCorrect(i)}
-                      className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-colors ${
-                        newCorrect === i
-                          ? "bg-success text-success-foreground"
-                          : "bg-secondary text-secondary-foreground"
-                      }`}
-                    >
+                    <button onClick={() => setNewCorrect(i)} className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-colors ${newCorrect === i ? "bg-success text-success-foreground" : "bg-secondary text-secondary-foreground"}`}>
                       {optionLabels[i]}
                     </button>
-                    <Input
-                      placeholder={`选项 ${optionLabels[i]}`}
-                      value={opt}
-                      onChange={(e) => {
-                        const copy = [...newOptions];
-                        copy[i] = e.target.value;
-                        setNewOptions(copy);
-                      }}
-                    />
+                    <Input placeholder={`选项 ${optionLabels[i]}`} value={opt} onChange={(e) => { const copy = [...newOptions]; copy[i] = e.target.value; setNewOptions(copy); }} />
                   </div>
                 ))}
               </div>
@@ -114,42 +118,33 @@ const Questions = () => {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {filtered.map((q, i) => (
-          <div
-            key={q.id}
-            className="bg-card rounded-xl p-6 shadow-card hover:shadow-elevated transition-shadow animate-fade-in"
-            style={{ animationDelay: `${i * 60}ms` }}
-          >
+          <div key={q.id} className="bg-card rounded-xl p-6 shadow-card hover:shadow-elevated transition-shadow animate-fade-in" style={{ animationDelay: `${i * 60}ms` }}>
             <div className="flex items-start justify-between mb-3">
               <div className="flex items-center gap-2">
                 <FileQuestion className="w-5 h-5 text-primary" />
                 <Badge variant="secondary">{q.category}</Badge>
               </div>
-              <Badge variant="outline" className="text-xs">
-                {q.type === "single" ? "单选题" : "判断题"}
-              </Badge>
+              <div className="flex items-center gap-2">
+                <Badge variant="outline" className="text-xs">{q.type === "single" ? "单选题" : "判断题"}</Badge>
+                <button onClick={() => handleDelete(q.id)} className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors">
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
             </div>
             <p className="font-medium mb-4">{q.title}</p>
             <div className="grid grid-cols-2 gap-2">
-              {q.options.map((opt, oi) => (
-                <div
-                  key={oi}
-                  className={`flex items-center gap-2 p-2.5 rounded-lg text-sm ${
-                    oi === q.correctAnswer
-                      ? "bg-success/10 text-success font-medium"
-                      : "bg-secondary/50 text-muted-foreground"
-                  }`}
-                >
-                  {oi === q.correctAnswer ? (
-                    <CheckCircle2 className="w-4 h-4 shrink-0" />
-                  ) : (
-                    <Circle className="w-4 h-4 shrink-0" />
-                  )}
+              {q.options.map((opt: string, oi: number) => (
+                <div key={oi} className={`flex items-center gap-2 p-2.5 rounded-lg text-sm ${oi === q.correct_answer ? "bg-success/10 text-success font-medium" : "bg-secondary/50 text-muted-foreground"}`}>
+                  {oi === q.correct_answer ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <Circle className="w-4 h-4 shrink-0" />}
                   <span>{optionLabels[oi]}. {opt}</span>
                 </div>
               ))}
             </div>
           </div>
         ))}
+        {filtered.length === 0 && (
+          <div className="col-span-full text-center py-12 text-muted-foreground">暂无题目，点击"新建题目"开始</div>
+        )}
       </div>
     </div>
   );
