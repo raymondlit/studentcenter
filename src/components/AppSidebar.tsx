@@ -1,13 +1,8 @@
 import { NavLink } from "@/components/NavLink";
+import { useAuth } from "@/contexts/AuthContext";
 import { 
-  LayoutDashboard, 
-  Users, 
-  GraduationCap, 
-  FileQuestion, 
-  BarChart3, 
-  Settings,
-  Smartphone,
-  CreditCard
+  LayoutDashboard, Users, GraduationCap, FileQuestion, BarChart3, 
+  Smartphone, CreditCard, LogOut
 } from "lucide-react";
 
 const navItems = [
@@ -21,6 +16,8 @@ const navItems = [
 ];
 
 export function AppSidebar() {
+  const { signOut } = useAuth();
+
   return (
     <aside className="hidden md:flex w-64 flex-col bg-sidebar text-sidebar-foreground min-h-screen">
       <div className="p-6 border-b border-sidebar-border">
@@ -29,9 +26,7 @@ export function AppSidebar() {
             <GraduationCap className="w-6 h-6 text-primary-foreground" />
           </div>
           <div>
-            <h1 className="font-display font-bold text-lg text-sidebar-primary-foreground">
-              互动课堂
-            </h1>
+            <h1 className="font-display font-bold text-lg text-sidebar-primary-foreground">互动课堂</h1>
             <p className="text-xs text-sidebar-foreground/60">教学互动平台</p>
           </div>
         </div>
@@ -39,13 +34,7 @@ export function AppSidebar() {
 
       <nav className="flex-1 p-4 space-y-1">
         {navItems.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            end={item.to === "/"}
-            className="flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all duration-200 text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-            activeClassName="bg-sidebar-accent text-sidebar-primary"
-          >
+          <NavLink key={item.to} to={item.to} end={item.to === "/"} className="flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all duration-200 text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground" activeClassName="bg-sidebar-accent text-sidebar-primary">
             <item.icon className="w-5 h-5" />
             {item.label}
           </NavLink>
@@ -53,14 +42,10 @@ export function AppSidebar() {
       </nav>
 
       <div className="p-4 border-t border-sidebar-border">
-        <NavLink
-          to="/settings"
-          className="flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-all"
-          activeClassName="bg-sidebar-accent text-sidebar-primary"
-        >
-          <Settings className="w-5 h-5" />
-          设置
-        </NavLink>
+        <button onClick={signOut} className="flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-all w-full">
+          <LogOut className="w-5 h-5" />
+          退出登录
+        </button>
       </div>
     </aside>
   );
