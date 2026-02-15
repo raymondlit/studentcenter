@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
-import { Plus, Search, FileQuestion, CheckCircle2, Circle, Trash2 } from "lucide-react";
+import { Plus, Search, FileQuestion, CheckCircle2, Circle, Trash2, Link2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 
 const optionLabels = ["A", "B", "C", "D"];
@@ -24,9 +25,15 @@ interface QuestionRow {
   created_at: string;
 }
 
+interface ClassOption {
+  id: string;
+  name: string;
+}
+
 const Questions = () => {
   const { user } = useAuth();
   const [questions, setQuestions] = useState<QuestionRow[]>([]);
+  const [classes, setClasses] = useState<ClassOption[]>([]);
   const [search, setSearch] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [newTitle, setNewTitle] = useState("");
@@ -35,12 +42,23 @@ const Questions = () => {
   const [newCategory, setNewCategory] = useState("");
   const { toast } = useToast();
 
+  // Class association dialog
+  const [assocOpen, setAssocOpen] = useState(false);
+  const [assocQuestion, setAssocQuestion] = useState<QuestionRow | null>(null);
+  const [linkedClassIds, setLinkedClassIds] = useState<string[]>([]);
+  const [savingAssoc, setSavingAssoc] = useState(false);
+
   const fetchQuestions = async () => {
     const { data } = await supabase.from("questions").select("*").order("created_at", { ascending: false });
     setQuestions((data || []).map((q: any) => ({ ...q, options: q.options || [] })));
   };
 
-  useEffect(() => { fetchQuestions(); }, []);
+  const fetchClasses = async () => {
+    const { data } = await supabase.from("classes").select("id, name").order("created_at");
+    setClasses(data || []);
+  };
+
+  useEffect(() => { fetchQuestions(); fetchClasses(); }, []);
 
   const filtered = questions.filter(
     (q) => q.title.includes(search) || q.category.includes(search)
@@ -68,12 +86,45 @@ const Questions = () => {
     fetchQuestions();
   };
 
+  const openAssocDialog = async (q: QuestionRow) => {
+    setAssocQuestion(q);
+    // Fetch existing associations
+    const { data } = await (supabase as any).from("class_questions").select("class_id").eq("question_id", q.id);
+    setLinkedClassIds((data || []).map((r: any) => r.class_id));
+    setAssocOpen(true);
+  };
+
+  const toggleClassLink = (classId: string) => {
+    setLinkedClassIds(prev =>
+      prev.includes(classId) ? prev.filter(id => id !== classId) : [...prev, classId]
+    );
+  };
+
+  const saveAssociations = async () => {
+    if (!assocQuestion || !user) return;
+    setSavingAssoc(true);
+    // Delete all existing, then insert new
+    await (supabase as any).from("class_questions").delete().eq("question_id", assocQuestion.id);
+    if (linkedClassIds.length > 0) {
+      const rows = linkedClassIds.map(cid => ({
+        question_id: assocQuestion.id,
+        class_id: cid,
+        user_id: user.id,
+      }));
+      const { error } = await (supabase as any).from("class_questions").insert(rows);
+      if (error) { toast({ title: "错误", description: error.message, variant: "destructive" }); setSavingAssoc(false); return; }
+    }
+    toast({ title: "成功", description: `已关联 ${linkedClassIds.length} 个班级` });
+    setSavingAssoc(false);
+    setAssocOpen(false);
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-display font-bold">题目管理</h1>
-          <p className="text-muted-foreground mt-1">创建和管理您的题库</p>
+          <p className="text-muted-foreground mt-1">创建和管理您的题库，点击关联按钮将题目分配到班级</p>
         </div>
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
@@ -126,6 +177,9 @@ const Questions = () => {
               </div>
               <div className="flex items-center gap-2">
                 <Badge variant="outline" className="text-xs">{q.type === "single" ? "单选题" : "判断题"}</Badge>
+                <button onClick={() => openAssocDialog(q)} className="p-1 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors" title="关联班级">
+                  <Link2 className="w-4 h-4" />
+                </button>
                 <button onClick={() => handleDelete(q.id)} className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors">
                   <Trash2 className="w-4 h-4" />
                 </button>
@@ -146,6 +200,37 @@ const Questions = () => {
           <div className="col-span-full text-center py-12 text-muted-foreground">暂无题目，点击"新建题目"开始</div>
         )}
       </div>
+
+      {/* Association Dialog */}
+      <Dialog open={assocOpen} onOpenChange={setAssocOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>关联班级</DialogTitle></DialogHeader>
+          {assocQuestion && (
+            <div className="space-y-4 py-4">
+              <p className="text-sm text-muted-foreground line-clamp-2">{assocQuestion.title}</p>
+              <div className="space-y-3">
+                <Label>选择要关联的班级</Label>
+                {classes.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">暂无班级，请先创建班级</p>
+                ) : (
+                  classes.map(c => (
+                    <div key={c.id} className="flex items-center gap-3 p-3 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-colors cursor-pointer" onClick={() => toggleClassLink(c.id)}>
+                      <Checkbox checked={linkedClassIds.includes(c.id)} onCheckedChange={() => toggleClassLink(c.id)} />
+                      <span className="font-medium text-sm">{c.name}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAssocOpen(false)}>取消</Button>
+            <Button onClick={saveAssociations} disabled={savingAssoc} className="gradient-primary text-primary-foreground border-0">
+              {savingAssoc ? "保存中..." : "保存"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
