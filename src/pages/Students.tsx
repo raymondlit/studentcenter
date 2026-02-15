@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
-import { Search, Upload, Download, CreditCard, Pencil, Trash2, Plus } from "lucide-react";
+import { Search, Upload, Download, CreditCard, Pencil, Trash2, Plus, ClipboardPaste } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -15,6 +15,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 
 interface StudentRow {
@@ -50,6 +51,10 @@ const Students = () => {
   const [addStudentNo, setAddStudentNo] = useState("");
   const [addClassId, setAddClassId] = useState("");
 
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasteText, setPasteText] = useState("");
+  const [pasteClassId, setPasteClassId] = useState("");
+
   const fetchClasses = async () => {
     const { data } = await supabase.from("classes").select("id, name").order("created_at");
     setClasses(data || []);
@@ -80,6 +85,41 @@ const Students = () => {
 
   const handleImportClick = () => fileInputRef.current?.click();
 
+  const parseStudentLines = (text: string): { student_no: string; name: string }[] => {
+    const lines = text.split(/\r?\n/).filter((l) => l.trim());
+    const startIdx = lines[0]?.includes("学号") || lines[0]?.includes("姓名") || lines[0]?.includes("序号") ? 1 : 0;
+    const result: { student_no: string; name: string }[] = [];
+
+    for (let i = startIdx; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+      // Try splitting by comma, tab, or Chinese comma
+      const cols = line.split(/[,\t，]/).map((c) => c.trim()).filter(Boolean);
+      if (cols.length >= 2) {
+        // Two or more columns: first is student_no, second is name (or vice versa)
+        // Heuristic: if first col is all digits, treat as student_no
+        const isFirstDigit = /^\d+$/.test(cols[0]);
+        result.push({
+          student_no: isFirstDigit ? cols[0] : cols[1],
+          name: isFirstDigit ? cols[1] : cols[0],
+        });
+      } else {
+        // Single column: treat as name, auto-number
+        result.push({ student_no: "", name: cols[0] });
+      }
+    }
+
+    // Auto-number entries without student_no
+    const existingCount = students.length;
+    result.forEach((r, idx) => {
+      if (!r.student_no) {
+        r.student_no = String(existingCount + idx + 1).padStart(3, "0");
+      }
+    });
+
+    return result;
+  };
+
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !user || classes.length === 0) return;
@@ -87,35 +127,39 @@ const Students = () => {
     const reader = new FileReader();
     reader.onload = async (event) => {
       const text = event.target?.result as string;
-      const lines = text.split("\n").filter((l) => l.trim());
-      const startIdx = lines[0]?.includes("学号") || lines[0]?.includes("姓名") ? 1 : 0;
-      const toInsert: any[] = [];
       const targetClassId = selectedClass !== "all" ? selectedClass : classes[0].id;
-
-      for (let i = startIdx; i < lines.length; i++) {
-        const cols = lines[i].split(/[,\t，]/).map((c) => c.trim());
-        if (cols.length >= 2) {
-          toInsert.push({
-            user_id: user.id,
-            class_id: targetClassId,
-            student_no: cols[0],
-            name: cols[1],
-            card_no: students.length + toInsert.length + 1,
-          });
-        }
-      }
-
-      if (toInsert.length > 0) {
-        const { error } = await supabase.from("students").insert(toInsert);
-        if (error) { toast({ title: "导入失败", description: error.message, variant: "destructive" }); return; }
-        toast({ title: "导入成功", description: `已导入 ${toInsert.length} 名学生` });
-        fetchStudents();
-      } else {
-        toast({ title: "导入失败", description: "未识别到有效数据，请使用 CSV 格式（学号,姓名）" });
-      }
+      await importStudents(text, targetClassId);
     };
-    reader.readAsText(file);
+    reader.readAsText(file, "UTF-8");
     e.target.value = "";
+  };
+
+  const importStudents = async (text: string, targetClassId: string) => {
+    if (!user) return;
+    const parsed = parseStudentLines(text);
+    if (parsed.length === 0) {
+      toast({ title: "导入失败", description: "未识别到有效数据，每行一个姓名，或使用「学号,姓名」格式", variant: "destructive" });
+      return;
+    }
+    const toInsert = parsed.map((p, idx) => ({
+      user_id: user.id,
+      class_id: targetClassId,
+      student_no: p.student_no,
+      name: p.name,
+      card_no: students.length + idx + 1,
+    }));
+    const { error } = await supabase.from("students").insert(toInsert);
+    if (error) { toast({ title: "导入失败", description: error.message, variant: "destructive" }); return; }
+    toast({ title: "导入成功", description: `已导入 ${toInsert.length} 名学生` });
+    fetchStudents();
+  };
+
+  const handlePasteImport = async () => {
+    if (!pasteText.trim() || classes.length === 0) return;
+    const targetClassId = pasteClassId || (selectedClass !== "all" ? selectedClass : classes[0].id);
+    await importStudents(pasteText, targetClassId);
+    setPasteText("");
+    setPasteOpen(false);
   };
 
   const handleExport = () => {
@@ -171,9 +215,10 @@ const Students = () => {
           <h1 className="text-3xl font-display font-bold">学生管理</h1>
           <p className="text-muted-foreground mt-1">管理学生名单与卡片分配（支持70人班级）</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <Button variant="outline" onClick={() => setAddOpen(true)}><Plus className="w-4 h-4 mr-2" />添加学生</Button>
-          <Button variant="outline" onClick={handleImportClick}><Upload className="w-4 h-4 mr-2" />导入名单</Button>
+          <Button variant="outline" onClick={handleImportClick}><Upload className="w-4 h-4 mr-2" />导入TXT/CSV</Button>
+          <Button variant="outline" onClick={() => { setPasteClassId(selectedClass !== "all" ? selectedClass : classes[0]?.id || ""); setPasteOpen(true); }}><ClipboardPaste className="w-4 h-4 mr-2" />粘贴导入</Button>
           <Button variant="outline" onClick={handleExport}><Download className="w-4 h-4 mr-2" />导出</Button>
         </div>
       </div>
@@ -280,6 +325,37 @@ const Students = () => {
           <DialogFooter>
             <Button variant="outline" onClick={() => setAddOpen(false)}>取消</Button>
             <Button onClick={handleAdd} className="gradient-primary text-primary-foreground border-0">添加</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={pasteOpen} onOpenChange={setPasteOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader><DialogTitle>粘贴导入学生</DialogTitle></DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>班级</Label>
+              <Select value={pasteClassId} onValueChange={setPasteClassId}>
+                <SelectTrigger><SelectValue placeholder="选择班级" /></SelectTrigger>
+                <SelectContent>
+                  {classes.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>学生名单</Label>
+              <Textarea
+                placeholder={"每行一个学生，支持以下格式：\n张三\n李四\n王五\n\n或带学号：\n001,张三\n002,李四"}
+                value={pasteText}
+                onChange={(e) => setPasteText(e.target.value)}
+                rows={8}
+              />
+              <p className="text-xs text-muted-foreground">支持纯姓名（自动编号）或「学号,姓名」格式，逗号/Tab分隔均可</p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPasteOpen(false)}>取消</Button>
+            <Button onClick={handlePasteImport} className="gradient-primary text-primary-foreground border-0">导入</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
