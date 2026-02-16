@@ -1,12 +1,15 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { CreditCard, QrCode } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { CreditCard, QrCode, Printer } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 } from "@/components/ui/select";
 
 const Cards = () => {
   const [classes, setClasses] = useState<any[]>([]);
+  const navigate = useNavigate();
   const [selectedClass, setSelectedClass] = useState<string>("");
   const [students, setStudents] = useState<any[]>([]);
 
@@ -41,6 +44,12 @@ const Cards = () => {
           {classes.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
         </SelectContent>
       </Select>
+
+      {selectedClass && (
+        <Button onClick={() => navigate(`/print-cards?class=${selectedClass}`)} variant="outline">
+          <Printer className="w-4 h-4 mr-2" />打印该班级二维码卡片
+        </Button>
+      )}
 
       <div className="bg-card rounded-xl p-6 shadow-card">
         <div className="flex items-center gap-3 mb-6">
