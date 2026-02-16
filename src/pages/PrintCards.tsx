@@ -1,12 +1,12 @@
-import { useState, useEffect, useRef } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { QRCodeSVG } from "qrcode.react";
 import { Button } from "@/components/ui/button";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 } from "@/components/ui/select";
-import { Printer } from "lucide-react";
+import { Printer, ArrowLeft } from "lucide-react";
 
 interface StudentRow {
   id: string;
@@ -49,6 +49,7 @@ const QRCard = ({ student, index }: { student: StudentRow; index: number }) => {
 
 const PrintCards = () => {
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const [classes, setClasses] = useState<any[]>([]);
   const [selectedClass, setSelectedClass] = useState<string>("");
   const [students, setStudents] = useState<StudentRow[]>([]);
@@ -85,9 +86,14 @@ const PrintCards = () => {
     <div>
       {/* Controls - hidden when printing */}
       <div className="print:hidden space-y-4 mb-8">
-        <div>
-          <h1 className="text-3xl font-display font-bold">打印二维码卡片</h1>
-          <p className="text-muted-foreground mt-1">每页2张卡片，学生通过旋转卡片选择 A/B/C/D</p>
+        <div className="flex items-center gap-3">
+          <Button variant="outline" size="icon" onClick={() => navigate("/cards")}>
+            <ArrowLeft className="w-4 h-4" />
+          </Button>
+          <div>
+            <h1 className="text-3xl font-display font-bold">打印二维码卡片</h1>
+            <p className="text-muted-foreground mt-1">每页2张卡片，学生通过旋转卡片选择 A/B/C/D</p>
+          </div>
         </div>
 
         <div className="flex items-center gap-3">
