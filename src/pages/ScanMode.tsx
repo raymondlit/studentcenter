@@ -2,7 +2,8 @@ import { useState, useEffect } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
-import { Camera, CheckCircle2, Circle, ArrowLeft, BarChart3, Users, Play, Square } from "lucide-react";
+import { CheckCircle2, Circle, BarChart3, Users, Play, Square, Keyboard } from "lucide-react";
+import { CameraScanner } from "@/components/CameraScanner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -61,6 +62,7 @@ const ScanMode = () => {
   // Manual input mode (simulate scan)
   const [manualCardNo, setManualCardNo] = useState("");
   const [manualAnswer, setManualAnswer] = useState<number | null>(null);
+  const [showManualInput, setShowManualInput] = useState(false);
 
   useEffect(() => {
     fetchClasses();
@@ -291,38 +293,62 @@ const ScanMode = () => {
         </div>
       )}
 
-      {/* Manual input (simulate scanning) */}
+      {/* Camera scanner */}
       <div className="bg-card rounded-xl p-4 shadow-card">
-        <h3 className="text-sm font-semibold mb-3 flex items-center gap-2"><Camera className="w-4 h-4" />录入答案（模拟扫描）</h3>
-        <div className="flex gap-2 items-end flex-wrap">
-          <div className="space-y-1">
-            <label className="text-xs text-muted-foreground">卡片编号</label>
-            <input
-              type="number"
-              className="w-24 rounded-lg border border-input bg-background px-3 py-2 text-sm"
-              placeholder="编号"
-              value={manualCardNo}
-              onChange={e => setManualCardNo(e.target.value)}
-            />
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs text-muted-foreground">答案</label>
-            <div className="flex gap-1">
-              {optionLabels.map((label, i) => (
-                <button
-                  key={i}
-                  onClick={() => setManualAnswer(i)}
-                  className={`w-10 h-10 rounded-lg font-bold text-sm transition-colors ${manualAnswer === i ? "bg-primary text-primary-foreground" : "bg-secondary text-secondary-foreground hover:bg-secondary/80"}`}
-                >
-                  {label}
-                </button>
-              ))}
+        <h3 className="text-sm font-semibold mb-3">📷 摄像头扫描</h3>
+        <CameraScanner
+          onScan={(event) => {
+            const student = students.find(s => s.card_no === event.cardNo);
+            if (!student) {
+              toast({ title: "未匹配", description: `卡片 #${event.cardNo} 未找到对应学生`, variant: "destructive" });
+              return;
+            }
+            recordAnswer(student.id, event.answer);
+          }}
+        />
+      </div>
+
+      {/* Manual input toggle */}
+      <div className="bg-card rounded-xl p-4 shadow-card">
+        <button
+          onClick={() => setShowManualInput(!showManualInput)}
+          className="text-sm font-semibold flex items-center gap-2 w-full text-left"
+        >
+          <Keyboard className="w-4 h-4" />
+          手动录入答案
+          <span className="text-xs text-muted-foreground ml-auto">{showManualInput ? "收起" : "展开"}</span>
+        </button>
+        {showManualInput && (
+          <div className="flex gap-2 items-end flex-wrap mt-3">
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">卡片编号</label>
+              <input
+                type="number"
+                className="w-24 rounded-lg border border-input bg-background px-3 py-2 text-sm"
+                placeholder="编号"
+                value={manualCardNo}
+                onChange={e => setManualCardNo(e.target.value)}
+              />
             </div>
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">答案</label>
+              <div className="flex gap-1">
+                {optionLabels.map((label, i) => (
+                  <button
+                    key={i}
+                    onClick={() => setManualAnswer(i)}
+                    className={`w-10 h-10 rounded-lg font-bold text-sm transition-colors ${manualAnswer === i ? "bg-primary text-primary-foreground" : "bg-secondary text-secondary-foreground hover:bg-secondary/80"}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <Button onClick={handleManualSubmit} disabled={manualAnswer === null || !manualCardNo} className="gradient-primary text-primary-foreground border-0">
+              提交
+            </Button>
           </div>
-          <Button onClick={handleManualSubmit} disabled={manualAnswer === null || !manualCardNo} className="gradient-primary text-primary-foreground border-0">
-            提交
-          </Button>
-        </div>
+        )}
       </div>
 
       {/* Results list */}
