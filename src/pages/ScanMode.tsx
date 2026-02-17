@@ -259,6 +259,7 @@ const ScanMode = () => {
     await (supabase as any).from("scan_sessions").update({ status: "ended", ended_at: new Date().toISOString() }).eq("id", sessionId);
     setSessionActive(false);
     toast({ title: "测试结束", description: `共收集 ${results.length} 份答案` });
+    navigate(`/session/${sessionId}`);
   };
 
   const recordAnswer = useCallback(async (studentId: string, answer: number) => {
