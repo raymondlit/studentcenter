@@ -13,6 +13,7 @@ import Cards from "./pages/Cards";
 import Statistics from "./pages/Statistics";
 import ScanMode from "./pages/ScanMode";
 import PrintCards from "./pages/PrintCards";
+import SessionDetail from "./pages/SessionDetail";
 import Auth from "./pages/Auth";
 import NotFound from "./pages/NotFound";
 
@@ -41,6 +42,7 @@ function ProtectedRoutes() {
         <Route path="/cards" element={<Cards />} />
         <Route path="/statistics" element={<Statistics />} />
         <Route path="/scan" element={<ScanMode />} />
+        <Route path="/session/:sessionId" element={<SessionDetail />} />
         <Route path="/print-cards" element={<PrintCards />} />
       </Route>
       <Route path="*" element={<NotFound />} />
