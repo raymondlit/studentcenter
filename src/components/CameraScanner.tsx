@@ -70,13 +70,26 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
   }, []);
 
   const startCamera = useCallback(async (facing: "environment" | "user") => {
+    // Fully stop any previous stream first
     stopStream();
     setError(null);
     setCameraReady(false);
 
-    // Try exact facingMode first, then ideal, then any camera
-    const constraints = [
-      { video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } } },
+    // Small delay to let browser release camera hardware
+    await new Promise(r => setTimeout(r, 300));
+
+    if (!mountedRef.current) return;
+
+    const video = videoRef.current;
+    if (!video) return;
+
+    // Ensure video element is clean
+    video.srcObject = null;
+    video.load();
+
+    // Try multiple constraint strategies
+    const constraints: MediaStreamConstraints[] = [
+      { video: { facingMode: { exact: facing }, width: { ideal: 1280 }, height: { ideal: 720 } } },
       { video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 } } },
       { video: { width: { ideal: 1280 }, height: { ideal: 720 } } },
       { video: true },
@@ -104,37 +117,36 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
     }
 
     streamRef.current = stream;
-    const video = videoRef.current;
-    if (!video) {
-      stream.getTracks().forEach(t => t.stop());
-      return;
-    }
-
     video.srcObject = stream;
 
-    // Wait for video to be truly ready before playing
+    // Wait for video metadata to load
     try {
       await new Promise<void>((resolve, reject) => {
-        const onLoaded = () => {
+        const timeout = setTimeout(() => {
+          cleanup();
+          reject(new Error("摄像头加载超时"));
+        }, 8000);
+
+        const cleanup = () => {
+          clearTimeout(timeout);
           video.removeEventListener("loadedmetadata", onLoaded);
-          video.removeEventListener("error", onError);
-          resolve();
+          video.removeEventListener("error", onErr);
         };
-        const onError = () => {
-          video.removeEventListener("loadedmetadata", onLoaded);
-          video.removeEventListener("error", onError);
-          reject(new Error("Video load failed"));
-        };
-        // If already has metadata, resolve immediately
+
+        const onLoaded = () => { cleanup(); resolve(); };
+        const onErr = () => { cleanup(); reject(new Error("Video load failed")); };
+
         if (video.readyState >= 1) {
+          cleanup();
           resolve();
         } else {
           video.addEventListener("loadedmetadata", onLoaded);
-          video.addEventListener("error", onError);
+          video.addEventListener("error", onErr);
         }
       });
 
       await video.play();
+
       if (mountedRef.current) {
         setCameraReady(true);
         setActive(true);
