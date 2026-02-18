@@ -75,39 +75,46 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
     setError(null);
     setCameraReady(false);
 
-    // Small delay to let browser release camera hardware
-    await new Promise(r => setTimeout(r, 300));
+    // Small delay to let mobile browsers release camera hardware
+    await new Promise(r => setTimeout(r, 500));
 
     if (!mountedRef.current) return;
 
     const video = videoRef.current;
     if (!video) return;
 
-    // Ensure video element is clean
+    // Reset video element without calling load() which can break stream playback
     video.srcObject = null;
-    video.load();
 
-    // Try multiple constraint strategies
+    // Try multiple constraint strategies for maximum compatibility
     const constraints: MediaStreamConstraints[] = [
-      { video: { facingMode: { exact: facing }, width: { ideal: 1280 }, height: { ideal: 720 } } },
-      { video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 } } },
-      { video: { width: { ideal: 1280 }, height: { ideal: 720 } } },
-      { video: true },
+      { video: { facingMode: { exact: facing }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
+      { video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
+      { video: { facingMode: { ideal: facing } }, audio: false },
+      { video: true, audio: false },
     ];
 
     let stream: MediaStream | null = null;
+    let lastErr: any = null;
     for (const c of constraints) {
       try {
         stream = await navigator.mediaDevices.getUserMedia(c);
         break;
-      } catch {
+      } catch (e) {
+        lastErr = e;
         continue;
       }
     }
 
     if (!stream) {
-      setError("无法打开摄像头，请检查权限设置");
+      const msg = lastErr?.name === "NotAllowedError"
+        ? "摄像头权限被拒绝，请在浏览器设置中允许摄像头访问"
+        : lastErr?.name === "NotFoundError"
+        ? "未检测到摄像头设备"
+        : "无法打开摄像头，请检查权限设置";
+      setError(msg);
       setActive(false);
+      console.error("Camera access failed:", lastErr);
       return;
     }
 
@@ -118,29 +125,44 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
 
     streamRef.current = stream;
     video.srcObject = stream;
+    // Ensure attributes are set for mobile
+    video.setAttribute("playsinline", "true");
+    video.setAttribute("webkit-playsinline", "true");
+    video.muted = true;
 
-    // Wait for video metadata to load
+    // Wait for video to be ready to play
     try {
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => {
           cleanup();
           reject(new Error("摄像头加载超时"));
-        }, 8000);
+        }, 10000);
 
         const cleanup = () => {
           clearTimeout(timeout);
           video.removeEventListener("loadedmetadata", onLoaded);
+          video.removeEventListener("canplay", onCanPlay);
           video.removeEventListener("error", onErr);
         };
 
-        const onLoaded = () => { cleanup(); resolve(); };
+        const onLoaded = () => {
+          // On some browsers, loadedmetadata is enough
+          if (video.videoWidth > 0 && video.videoHeight > 0) {
+            cleanup();
+            resolve();
+          }
+          // else wait for canplay
+        };
+        const onCanPlay = () => { cleanup(); resolve(); };
         const onErr = () => { cleanup(); reject(new Error("Video load failed")); };
 
-        if (video.readyState >= 1) {
+        // Check if already ready
+        if (video.readyState >= 2) {
           cleanup();
           resolve();
         } else {
           video.addEventListener("loadedmetadata", onLoaded);
+          video.addEventListener("canplay", onCanPlay);
           video.addEventListener("error", onErr);
         }
       });
@@ -150,6 +172,7 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
       if (mountedRef.current) {
         setCameraReady(true);
         setActive(true);
+        console.log("Camera started successfully, resolution:", video.videoWidth, "x", video.videoHeight);
       }
     } catch (err: any) {
       console.error("Camera play error:", err);
@@ -207,7 +230,7 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
       ctx.drawImage(video, 0, 0);
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const code = jsQR(imageData.data, canvas.width, canvas.height, {
-        inversionAttempts: "dontInvert",
+        inversionAttempts: "attemptBoth",
       });
 
       if (code && code.data) {
@@ -249,8 +272,9 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
               ref={videoRef}
               className="absolute inset-0 w-full h-full object-cover"
               playsInline
+              webkit-playsinline="true"
               muted
-              autoPlay
+              autoPlay={false}
             />
             {/* Scan overlay */}
             <div className="absolute inset-0 pointer-events-none">
