@@ -46,13 +46,16 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
   const lastScannedRef = useRef<string>("");
   const cooldownRef = useRef<number>(0);
   const mountedRef = useRef(true);
+  // Stable ref for onScan to avoid restarting the scan loop
+  const onScanRef = useRef(onScan);
+  onScanRef.current = onScan;
 
   const [active, setActive] = useState(false);
   const [facingMode, setFacingMode] = useState<"environment" | "user">("environment");
   const [lastResult, setLastResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [cameraReady, setCameraReady] = useState(false);
 
-  // Robust stop: always clean up stream
   const stopStream = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
     rafRef.current = 0;
@@ -63,29 +66,84 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
+    setCameraReady(false);
   }, []);
 
   const startCamera = useCallback(async (facing: "environment" | "user") => {
-    // Always stop previous stream first
     stopStream();
     setError(null);
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } },
-      });
-      if (!mountedRef.current) {
-        stream.getTracks().forEach(t => t.stop());
-        return;
+    setCameraReady(false);
+
+    // Try exact facingMode first, then ideal, then any camera
+    const constraints = [
+      { video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } } },
+      { video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 } } },
+      { video: { width: { ideal: 1280 }, height: { ideal: 720 } } },
+      { video: true },
+    ];
+
+    let stream: MediaStream | null = null;
+    for (const c of constraints) {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(c);
+        break;
+      } catch {
+        continue;
       }
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
-      setActive(true);
-    } catch (err: any) {
-      setError("无法打开摄像头：" + (err.message || "请检查权限设置"));
+    }
+
+    if (!stream) {
+      setError("无法打开摄像头，请检查权限设置");
       setActive(false);
+      return;
+    }
+
+    if (!mountedRef.current) {
+      stream.getTracks().forEach(t => t.stop());
+      return;
+    }
+
+    streamRef.current = stream;
+    const video = videoRef.current;
+    if (!video) {
+      stream.getTracks().forEach(t => t.stop());
+      return;
+    }
+
+    video.srcObject = stream;
+
+    // Wait for video to be truly ready before playing
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onLoaded = () => {
+          video.removeEventListener("loadedmetadata", onLoaded);
+          video.removeEventListener("error", onError);
+          resolve();
+        };
+        const onError = () => {
+          video.removeEventListener("loadedmetadata", onLoaded);
+          video.removeEventListener("error", onError);
+          reject(new Error("Video load failed"));
+        };
+        // If already has metadata, resolve immediately
+        if (video.readyState >= 1) {
+          resolve();
+        } else {
+          video.addEventListener("loadedmetadata", onLoaded);
+          video.addEventListener("error", onError);
+        }
+      });
+
+      await video.play();
+      if (mountedRef.current) {
+        setCameraReady(true);
+        setActive(true);
+      }
+    } catch (err: any) {
+      console.error("Camera play error:", err);
+      setError("摄像头启动失败：" + (err.message || "未知错误"));
+      setActive(false);
+      stopStream();
     }
   }, [stopStream]);
 
@@ -115,9 +173,9 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
     };
   }, [stopStream]);
 
-  // Scanning loop
+  // Scanning loop — only depends on cameraReady, uses ref for onScan
   useEffect(() => {
-    if (!active) return;
+    if (!cameraReady) return;
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas) return;
@@ -150,7 +208,7 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
             lastScannedRef.current = key;
             cooldownRef.current = now;
             setLastResult(`#${parsed.cardNo} → ${ANSWER_LABELS[answer]}`);
-            onScan({
+            onScanRef.current({
               cardNo: parsed.cardNo,
               studentNo: parsed.studentNo,
               answer,
@@ -168,11 +226,10 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
       running = false;
       cancelAnimationFrame(rafRef.current);
     };
-  }, [active, onScan]);
+  }, [cameraReady]);
 
   return (
     <div className="flex flex-col h-full">
-      {/* Camera viewport */}
       <div className="relative flex-1 bg-black rounded-xl overflow-hidden">
         {active ? (
           <>
