@@ -6,10 +6,11 @@ import { Badge } from "@/components/ui/badge";
 
 const ANSWER_LABELS = ["A", "B", "C", "D"];
 
-// Max processing width — lower = faster scanning, especially on mobile
-const PROCESS_WIDTH = 640;
-// Max QR codes to detect per frame
-const MAX_CODES_PER_FRAME = 10;
+// 处理分辨率：在手机上提高采样质量，同时控制 CPU 压力
+const PROCESS_WIDTH_HIGH_QUALITY = 960;
+// 单帧最多尝试识别的二维码数量
+const MAX_CODES_PER_FRAME = 20;
+// UI 刷新节流，避免高频 setState 拖慢扫描
 
 interface ScanEvent {
   cardNo: number;
@@ -39,28 +40,49 @@ function detectAnswer(location: {
 }
 
 function parseQRValue(value: string): { studentNo: string; cardNo: number } | null {
-  const m = value.match(/^STU-(.+)-(\d+)$/);
-  if (!m) return null;
-  return { studentNo: m[1], cardNo: parseInt(m[2], 10) };
+  // 兼容旧格式: STU-<studentNo>-<cardNo>
+  const legacy = value.match(/^STU-(.+)-(\d+)$/);
+  if (legacy) return { studentNo: legacy[1], cardNo: parseInt(legacy[2], 10) };
+
+  // 新简化格式: S:<studentNo>:<cardNo>（更短，二维码密度更低）
+  const compact = value.match(/^S:([^:]+):(\d+)$/);
+  if (compact) return { studentNo: compact[1], cardNo: parseInt(compact[2], 10) };
+
+  return null;
 }
 
 /**
- * Mask a detected QR code region on the canvas so jsQR won't find it again.
- * Paints a white rectangle over the QR code area with padding.
+ * 遮盖二维码区域，避免同一帧重复识别。
+ * 同时写回 canvas 与 imageData，避免每次循环重复 getImageData。
  */
 function maskQRRegion(
   ctx: CanvasRenderingContext2D,
+  imageData: ImageData,
   location: { topLeftCorner: { x: number; y: number }; topRightCorner: { x: number; y: number }; bottomLeftCorner: { x: number; y: number }; bottomRightCorner: { x: number; y: number } },
-  padding = 10
+  padding = 12
 ) {
   const xs = [location.topLeftCorner.x, location.topRightCorner.x, location.bottomLeftCorner.x, location.bottomRightCorner.x];
   const ys = [location.topLeftCorner.y, location.topRightCorner.y, location.bottomLeftCorner.y, location.bottomRightCorner.y];
-  const minX = Math.min(...xs) - padding;
-  const minY = Math.min(...ys) - padding;
-  const maxX = Math.max(...xs) + padding;
-  const maxY = Math.max(...ys) + padding;
+  const minX = Math.max(0, Math.floor(Math.min(...xs) - padding));
+  const minY = Math.max(0, Math.floor(Math.min(...ys) - padding));
+  const maxX = Math.min(imageData.width, Math.ceil(Math.max(...xs) + padding));
+  const maxY = Math.min(imageData.height, Math.ceil(Math.max(...ys) + padding));
+
   ctx.fillStyle = "#FFFFFF";
   ctx.fillRect(minX, minY, maxX - minX, maxY - minY);
+
+  const data = imageData.data;
+  const stride = imageData.width * 4;
+  for (let y = minY; y < maxY; y++) {
+    let row = y * stride + minX * 4;
+    for (let x = minX; x < maxX; x++) {
+      data[row] = 255;
+      data[row + 1] = 255;
+      data[row + 2] = 255;
+      data[row + 3] = 255;
+      row += 4;
+    }
+  }
 }
 
 export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps) {
@@ -81,6 +103,8 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
   const [cameraReady, setCameraReady] = useState(false);
   const [scanCount, setScanCount] = useState(0);
   const [fps, setFps] = useState(0);
+  const scanCountRef = useRef(0);
+  const uiLastSyncRef = useRef(0);
 
   const stopStream = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
@@ -112,11 +136,11 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
 
     video.srcObject = null;
 
-    // Request higher resolution for better multi-QR detection
+    // Request high resolution + fps hints for better multi-QR detection
     const constraints: MediaStreamConstraints[] = [
-      { video: { facingMode: { exact: facing }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false },
-      { video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
-      { video: { facingMode: { ideal: facing } }, audio: false },
+      { video: { facingMode: { exact: facing }, width: { ideal: 2560 }, height: { ideal: 1440 }, frameRate: { ideal: 30, max: 60 } }, audio: false },
+      { video: { facingMode: facing, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } }, audio: false },
+      { video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
       { video: true, audio: false },
     ];
 
@@ -226,40 +250,39 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
         return;
       }
 
-      // Downscale for faster processing
-      const scale = Math.min(1, PROCESS_WIDTH / video.videoWidth);
+      // 保持较高采样分辨率，同时避免超大帧拖慢手机 CPU
+      const processWidth = Math.min(PROCESS_WIDTH_HIGH_QUALITY, video.videoWidth || PROCESS_WIDTH_HIGH_QUALITY);
+      const scale = Math.min(1, processWidth / video.videoWidth);
       const w = Math.round(video.videoWidth * scale);
       const h = Math.round(video.videoHeight * scale);
       canvas.width = w;
       canvas.height = h;
       ctx.drawImage(video, 0, 0, w, h);
 
-      // Iterative multi-QR detection: find → mask → repeat
+      // 只在每帧读取一次像素数据，循环中直接在同一 buffer 上遮盖
       const now = Date.now();
-      let foundThisFrame = 0;
+      const imageData = ctx.getImageData(0, 0, w, h);
       const cooldownMap = cooldownMapRef.current;
 
       for (let i = 0; i < MAX_CODES_PER_FRAME; i++) {
-        const imageData = ctx.getImageData(0, 0, w, h);
         const code = jsQR(imageData.data, w, h, { inversionAttempts: "attemptBoth" });
         if (!code || !code.data) break;
 
-        // Mask this code so next iteration won't find it again
-        maskQRRegion(ctx, code.location);
+        // 遮盖当前二维码，继续识别同一帧中的其他码
+        maskQRRegion(ctx, imageData, code.location);
 
         const parsed = parseQRValue(code.data);
         if (!parsed) continue;
 
-        const key = `${parsed.cardNo}`;
+        const key = `${parsed.studentNo}-${parsed.cardNo}`;
         const lastTime = cooldownMap.get(key) || 0;
-        if (now - lastTime < 2000) continue; // Per-code 2s cooldown
+        if (now - lastTime < 1500) continue; // 缩短冷却，允许更快批量识别
 
         const answer = detectAnswer(code.location);
         cooldownMap.set(key, now);
-        foundThisFrame++;
 
+        scanCountRef.current += 1;
         setLastResult(`#${parsed.cardNo} → ${ANSWER_LABELS[answer]}`);
-        setScanCount(prev => prev + 1);
 
         onScanRef.current({
           cardNo: parsed.cardNo,
@@ -269,13 +292,18 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
         });
       }
 
-      // FPS counter
+      // FPS + 计数 UI 节流更新，降低 React 重渲染开销
       frameCount++;
       const elapsed = performance.now() - lastFpsTime;
       if (elapsed >= 1000) {
-        setFps(Math.round(frameCount * 1000 / elapsed));
+        setFps(Math.round((frameCount * 1000) / elapsed));
         frameCount = 0;
         lastFpsTime = performance.now();
+      }
+
+      if (now - uiLastSyncRef.current > 180) {
+        setScanCount(scanCountRef.current);
+        uiLastSyncRef.current = now;
       }
 
       // Clean up old cooldowns (> 10s)
