@@ -18,7 +18,7 @@ interface StudentRow {
 const QRCard = ({ student, index }: { student: StudentRow; index: number }) => {
   const cardNo = student.card_no ?? index + 1;
   // Use a unique value per student for QR content
-  const qrValue = `STU-${student.student_no}-${cardNo}`;
+  const qrValue = `S:${student.student_no}:${cardNo}`;
 
   return (
     <div className="qr-card relative w-[280px] h-[280px] flex items-center justify-center mx-auto">
@@ -39,9 +39,9 @@ const QRCard = ({ student, index }: { student: StudentRow; index: number }) => {
       {/* QR Code */}
       <QRCodeSVG
         value={qrValue}
-        size={200}
-        level="M"
-        includeMargin={false}
+        size={220}
+        level="L"
+        includeMargin={true}
       />
     </div>
   );
@@ -122,7 +122,7 @@ const PrintCards = () => {
             className="print-page flex flex-col items-center justify-center gap-12"
           >
             {pair.map((student) => (
-              <div key={student.id} className="border-2 border-dashed border-gray-300 rounded-2xl p-4 print:border-gray-400">
+              <div key={student.id} className="border-2 border-dashed border-border rounded-2xl p-4 print:border-border">
                 <QRCard student={student} index={students.indexOf(student)} />
               </div>
             ))}
