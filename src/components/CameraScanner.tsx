@@ -81,7 +81,11 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
     if (!mountedRef.current) return;
 
     const video = videoRef.current;
-    if (!video) return;
+    if (!video) {
+      setError("摄像头初始化失败，请重试");
+      setActive(false);
+      return;
+    }
 
     // Reset video element without calling load() which can break stream playback
     video.srcObject = null;
@@ -266,16 +270,17 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
   return (
     <div className="flex flex-col h-full">
       <div className="relative flex-1 bg-black rounded-xl overflow-hidden">
-        {active ? (
+        <video
+          ref={videoRef}
+          className={`absolute inset-0 w-full h-full object-cover ${active ? "opacity-100" : "opacity-0"}`}
+          playsInline
+          webkit-playsinline="true"
+          muted
+          autoPlay={false}
+        />
+
+        {active && (
           <>
-            <video
-              ref={videoRef}
-              className="absolute inset-0 w-full h-full object-cover"
-              playsInline
-              webkit-playsinline="true"
-              muted
-              autoPlay={false}
-            />
             {/* Scan overlay */}
             <div className="absolute inset-0 pointer-events-none">
               <div className="absolute inset-[12%] border-2 border-primary/60 rounded-xl" />
@@ -295,7 +300,9 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
               </Button>
             </div>
           </>
-        ) : (
+        )}
+
+        {!active && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
             <Camera className="w-12 h-12 text-muted-foreground/40" />
             <Button
