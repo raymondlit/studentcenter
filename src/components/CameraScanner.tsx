@@ -1,9 +1,15 @@
 import { useRef, useEffect, useState, useCallback } from "react";
 import jsQR from "jsqr";
-import { Camera, CameraOff, SwitchCamera } from "lucide-react";
+import { Camera, CameraOff, SwitchCamera, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 
 const ANSWER_LABELS = ["A", "B", "C", "D"];
+
+// Max processing width — lower = faster scanning, especially on mobile
+const PROCESS_WIDTH = 640;
+// Max QR codes to detect per frame
+const MAX_CODES_PER_FRAME = 10;
 
 interface ScanEvent {
   cardNo: number;
@@ -38,15 +44,33 @@ function parseQRValue(value: string): { studentNo: string; cardNo: number } | nu
   return { studentNo: m[1], cardNo: parseInt(m[2], 10) };
 }
 
+/**
+ * Mask a detected QR code region on the canvas so jsQR won't find it again.
+ * Paints a white rectangle over the QR code area with padding.
+ */
+function maskQRRegion(
+  ctx: CanvasRenderingContext2D,
+  location: { topLeftCorner: { x: number; y: number }; topRightCorner: { x: number; y: number }; bottomLeftCorner: { x: number; y: number }; bottomRightCorner: { x: number; y: number } },
+  padding = 10
+) {
+  const xs = [location.topLeftCorner.x, location.topRightCorner.x, location.bottomLeftCorner.x, location.bottomRightCorner.x];
+  const ys = [location.topLeftCorner.y, location.topRightCorner.y, location.bottomLeftCorner.y, location.bottomRightCorner.y];
+  const minX = Math.min(...xs) - padding;
+  const minY = Math.min(...ys) - padding;
+  const maxX = Math.max(...xs) + padding;
+  const maxY = Math.max(...ys) + padding;
+  ctx.fillStyle = "#FFFFFF";
+  ctx.fillRect(minX, minY, maxX - minX, maxY - minY);
+}
+
 export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number>(0);
-  const lastScannedRef = useRef<string>("");
-  const cooldownRef = useRef<number>(0);
+  // Per-code cooldown map: cardNo -> last scan timestamp
+  const cooldownMapRef = useRef<Map<string, number>>(new Map());
   const mountedRef = useRef(true);
-  // Stable ref for onScan to avoid restarting the scan loop
   const onScanRef = useRef(onScan);
   onScanRef.current = onScan;
 
@@ -55,6 +79,8 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
   const [lastResult, setLastResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [cameraReady, setCameraReady] = useState(false);
+  const [scanCount, setScanCount] = useState(0);
+  const [fps, setFps] = useState(0);
 
   const stopStream = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
@@ -70,14 +96,11 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
   }, []);
 
   const startCamera = useCallback(async (facing: "environment" | "user") => {
-    // Fully stop any previous stream first
     stopStream();
     setError(null);
     setCameraReady(false);
 
-    // Small delay to let mobile browsers release camera hardware
     await new Promise(r => setTimeout(r, 500));
-
     if (!mountedRef.current) return;
 
     const video = videoRef.current;
@@ -87,12 +110,11 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
       return;
     }
 
-    // Reset video element without calling load() which can break stream playback
     video.srcObject = null;
 
-    // Try multiple constraint strategies for maximum compatibility
+    // Request higher resolution for better multi-QR detection
     const constraints: MediaStreamConstraints[] = [
-      { video: { facingMode: { exact: facing }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
+      { video: { facingMode: { exact: facing }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false },
       { video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
       { video: { facingMode: { ideal: facing } }, audio: false },
       { video: true, audio: false },
@@ -118,7 +140,6 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
         : "无法打开摄像头，请检查权限设置";
       setError(msg);
       setActive(false);
-      console.error("Camera access failed:", lastErr);
       return;
     }
 
@@ -129,42 +150,24 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
 
     streamRef.current = stream;
     video.srcObject = stream;
-    // Ensure attributes are set for mobile
     video.setAttribute("playsinline", "true");
     video.setAttribute("webkit-playsinline", "true");
     video.muted = true;
 
-    // Wait for video to be ready to play
     try {
       await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          cleanup();
-          reject(new Error("摄像头加载超时"));
-        }, 10000);
-
+        const timeout = setTimeout(() => { cleanup(); reject(new Error("摄像头加载超时")); }, 10000);
         const cleanup = () => {
           clearTimeout(timeout);
           video.removeEventListener("loadedmetadata", onLoaded);
           video.removeEventListener("canplay", onCanPlay);
           video.removeEventListener("error", onErr);
         };
-
-        const onLoaded = () => {
-          // On some browsers, loadedmetadata is enough
-          if (video.videoWidth > 0 && video.videoHeight > 0) {
-            cleanup();
-            resolve();
-          }
-          // else wait for canplay
-        };
+        const onLoaded = () => { if (video.videoWidth > 0) { cleanup(); resolve(); } };
         const onCanPlay = () => { cleanup(); resolve(); };
         const onErr = () => { cleanup(); reject(new Error("Video load failed")); };
-
-        // Check if already ready
-        if (video.readyState >= 2) {
-          cleanup();
-          resolve();
-        } else {
+        if (video.readyState >= 2) { cleanup(); resolve(); }
+        else {
           video.addEventListener("loadedmetadata", onLoaded);
           video.addEventListener("canplay", onCanPlay);
           video.addEventListener("error", onErr);
@@ -176,7 +179,8 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
       if (mountedRef.current) {
         setCameraReady(true);
         setActive(true);
-        console.log("Camera started successfully, resolution:", video.videoWidth, "x", video.videoHeight);
+        setScanCount(0);
+        console.log("Camera started, resolution:", video.videoWidth, "x", video.videoHeight);
       }
     } catch (err: any) {
       console.error("Camera play error:", err);
@@ -187,32 +191,22 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
   }, [stopStream]);
 
   const toggleCamera = useCallback(() => {
-    if (active) {
-      stopStream();
-      setActive(false);
-    } else {
-      startCamera(facingMode);
-    }
+    if (active) { stopStream(); setActive(false); }
+    else { startCamera(facingMode); }
   }, [active, facingMode, startCamera, stopStream]);
 
   const switchFacing = useCallback(() => {
     const newFacing = facingMode === "environment" ? "user" : "environment";
     setFacingMode(newFacing);
-    if (active) {
-      startCamera(newFacing);
-    }
+    if (active) startCamera(newFacing);
   }, [active, facingMode, startCamera]);
 
-  // Cleanup on unmount
   useEffect(() => {
     mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      stopStream();
-    };
+    return () => { mountedRef.current = false; stopStream(); };
   }, [stopStream]);
 
-  // Scanning loop — only depends on cameraReady, uses ref for onScan
+  // Multi-QR scanning loop with downscaling and iterative detection
   useEffect(() => {
     if (!cameraReady) return;
     const video = videoRef.current;
@@ -222,6 +216,9 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
     if (!ctx) return;
 
     let running = true;
+    let frameCount = 0;
+    let lastFpsTime = performance.now();
+
     const scan = () => {
       if (!running) return;
       if (video.readyState !== video.HAVE_ENOUGH_DATA) {
@@ -229,42 +226,70 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
         return;
       }
 
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      ctx.drawImage(video, 0, 0);
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const code = jsQR(imageData.data, canvas.width, canvas.height, {
-        inversionAttempts: "attemptBoth",
-      });
+      // Downscale for faster processing
+      const scale = Math.min(1, PROCESS_WIDTH / video.videoWidth);
+      const w = Math.round(video.videoWidth * scale);
+      const h = Math.round(video.videoHeight * scale);
+      canvas.width = w;
+      canvas.height = h;
+      ctx.drawImage(video, 0, 0, w, h);
 
-      if (code && code.data) {
-        const now = Date.now();
-        const key = code.data;
-        if (key !== lastScannedRef.current || now - cooldownRef.current > 2000) {
-          const parsed = parseQRValue(code.data);
-          if (parsed) {
-            const answer = detectAnswer(code.location);
-            lastScannedRef.current = key;
-            cooldownRef.current = now;
-            setLastResult(`#${parsed.cardNo} → ${ANSWER_LABELS[answer]}`);
-            onScanRef.current({
-              cardNo: parsed.cardNo,
-              studentNo: parsed.studentNo,
-              answer,
-              answerLabel: ANSWER_LABELS[answer],
-            });
-          }
-        }
+      // Iterative multi-QR detection: find → mask → repeat
+      const now = Date.now();
+      let foundThisFrame = 0;
+      const cooldownMap = cooldownMapRef.current;
+
+      for (let i = 0; i < MAX_CODES_PER_FRAME; i++) {
+        const imageData = ctx.getImageData(0, 0, w, h);
+        const code = jsQR(imageData.data, w, h, { inversionAttempts: "attemptBoth" });
+        if (!code || !code.data) break;
+
+        // Mask this code so next iteration won't find it again
+        maskQRRegion(ctx, code.location);
+
+        const parsed = parseQRValue(code.data);
+        if (!parsed) continue;
+
+        const key = `${parsed.cardNo}`;
+        const lastTime = cooldownMap.get(key) || 0;
+        if (now - lastTime < 2000) continue; // Per-code 2s cooldown
+
+        const answer = detectAnswer(code.location);
+        cooldownMap.set(key, now);
+        foundThisFrame++;
+
+        setLastResult(`#${parsed.cardNo} → ${ANSWER_LABELS[answer]}`);
+        setScanCount(prev => prev + 1);
+
+        onScanRef.current({
+          cardNo: parsed.cardNo,
+          studentNo: parsed.studentNo,
+          answer,
+          answerLabel: ANSWER_LABELS[answer],
+        });
+      }
+
+      // FPS counter
+      frameCount++;
+      const elapsed = performance.now() - lastFpsTime;
+      if (elapsed >= 1000) {
+        setFps(Math.round(frameCount * 1000 / elapsed));
+        frameCount = 0;
+        lastFpsTime = performance.now();
+      }
+
+      // Clean up old cooldowns (> 10s)
+      if (frameCount === 0) {
+        cooldownMap.forEach((time, key) => {
+          if (now - time > 10000) cooldownMap.delete(key);
+        });
       }
 
       rafRef.current = requestAnimationFrame(scan);
     };
 
     rafRef.current = requestAnimationFrame(scan);
-    return () => {
-      running = false;
-      cancelAnimationFrame(rafRef.current);
-    };
+    return () => { running = false; cancelAnimationFrame(rafRef.current); };
   }, [cameraReady]);
 
   return (
@@ -283,7 +308,17 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
           <>
             {/* Scan overlay */}
             <div className="absolute inset-0 pointer-events-none">
-              <div className="absolute inset-[12%] border-2 border-primary/60 rounded-xl" />
+              <div className="absolute inset-[8%] border-2 border-primary/60 rounded-xl" />
+              {/* Status badges */}
+              <div className="absolute top-3 left-3 flex flex-col gap-1.5">
+                <Badge variant="secondary" className="bg-black/60 text-white border-0 text-xs">
+                  <Zap className="w-3 h-3 mr-1" />
+                  {fps} FPS
+                </Badge>
+                <Badge variant="secondary" className="bg-black/60 text-white border-0 text-xs">
+                  已扫 {scanCount}
+                </Badge>
+              </div>
               {lastResult && (
                 <div className="absolute bottom-3 left-1/2 -translate-x-1/2 bg-primary/90 text-primary-foreground text-sm font-bold px-4 py-1.5 rounded-full">
                   {lastResult}
