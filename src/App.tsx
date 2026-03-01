@@ -13,6 +13,7 @@ import Cards from "./pages/Cards";
 import Statistics from "./pages/Statistics";
 import ScanMode from "./pages/ScanMode";
 import PresentMode from "./pages/PresentMode";
+import Papers from "./pages/Papers";
 import PrintCards from "./pages/PrintCards";
 import SessionDetail from "./pages/SessionDetail";
 import Auth from "./pages/Auth";
@@ -44,6 +45,7 @@ function ProtectedRoutes() {
         <Route path="/statistics" element={<Statistics />} />
         <Route path="/scan" element={<ScanMode />} />
         <Route path="/present" element={<PresentMode />} />
+        <Route path="/papers" element={<Papers />} />
         <Route path="/session/:sessionId" element={<SessionDetail />} />
         <Route path="/print-cards" element={<PrintCards />} />
       </Route>
