@@ -224,6 +224,7 @@ const ScanMode = () => {
   const { user } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessionActive, setSessionActive] = useState(false);
@@ -235,6 +236,34 @@ const ScanMode = () => {
   const [showManual, setShowManual] = useState(false);
   const [manualCardNo, setManualCardNo] = useState("");
   const [manualAnswer, setManualAnswer] = useState<number | null>(null);
+
+  // Join existing session from PC presenter link
+  useEffect(() => {
+    const joinSessionId = searchParams.get("session");
+    if (!joinSessionId || sessionActive) return;
+    (async () => {
+      const { data: session } = await (supabase as any).from("scan_sessions").select("*").eq("id", joinSessionId).single();
+      if (!session || session.status !== "active") {
+        toast({ title: "会话无效", description: "该会话不存在或已结束", variant: "destructive" });
+        return;
+      }
+      const { data: q } = await supabase.from("questions").select("*").eq("id", session.question_id).single();
+      if (!q) return;
+      const { data: stuData } = await supabase.from("students").select("*").eq("class_id", session.class_id).order("card_no");
+      const { data: existingResults } = await (supabase as any).from("scan_results").select("*").eq("session_id", joinSessionId);
+
+      setStudents(stuData || []);
+      setSelectedClassId(session.class_id);
+      setSelectedQuestion({ ...q, options: q.options || [] } as QuestionRow);
+      setSessionId(joinSessionId);
+      setSessionActive(true);
+      setResults((existingResults || []).map((r: any) => {
+        const stu = (stuData || []).find((s: any) => s.id === r.student_id);
+        return { student_id: r.student_id, student_name: stu?.name || "", student_no: stu?.student_no || "", answer: r.answer, is_correct: r.is_correct };
+      }));
+      toast({ title: "已加入会话", description: "开始扫描学生卡片" });
+    })();
+  }, [searchParams]);
 
   const startSession = async (classId: string, questionId: string, question: QuestionRow) => {
     if (!user) return;
