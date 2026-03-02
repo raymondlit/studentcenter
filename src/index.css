@@ -122,3 +122,14 @@
     box-shadow: var(--shadow-elevated);
   }
 }
+
+@media print {
+  body { background: white !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  nav, aside, .print\\:hidden { display: none !important; }
+  .print\\:block { display: block !important; }
+  main { padding: 0 !important; }
+  .shadow-card { box-shadow: none !important; border: 1px solid #e5e7eb; }
+  .bg-card { background: white !important; }
+  .rounded-xl { border-radius: 8px; }
+  @page { margin: 15mm; size: A4; }
+}
