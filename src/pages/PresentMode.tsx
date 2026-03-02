@@ -94,7 +94,7 @@ function PresentSetup({ onStartQuestion, onStartPaper }: {
         <div className="text-center">
           <div className="inline-flex items-center gap-2 mb-4">
             <Monitor className="w-8 h-8 text-primary" />
-            <h1 className="text-3xl font-display font-bold">PC 展示模式</h1>
+            <h1 className="text-3xl font-display font-bold">发布测试</h1>
           </div>
           <p className="text-muted-foreground">选择班级，然后选择单个题目或试卷开始测试</p>
         </div>

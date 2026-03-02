@@ -61,7 +61,7 @@ function SessionSetup({
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-display font-bold">扫描测试</h1>
+        <h1 className="text-3xl font-display font-bold">扫描读卡</h1>
         <p className="text-muted-foreground mt-1">选择班级和题目，开始扫描学生答案</p>
       </div>
       <div className="max-w-md space-y-4">
