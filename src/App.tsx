@@ -16,6 +16,8 @@ import PresentMode from "./pages/PresentMode";
 import Papers from "./pages/Papers";
 import PrintCards from "./pages/PrintCards";
 import SessionDetail from "./pages/SessionDetail";
+import PaperReport from "./pages/PaperReport";
+import StudentReport from "./pages/StudentReport";
 import Auth from "./pages/Auth";
 import NotFound from "./pages/NotFound";
 
@@ -47,6 +49,8 @@ function ProtectedRoutes() {
         <Route path="/present" element={<PresentMode />} />
         <Route path="/papers" element={<Papers />} />
         <Route path="/session/:sessionId" element={<SessionDetail />} />
+        <Route path="/paper-report/:paperId" element={<PaperReport />} />
+        <Route path="/student-report/:studentId" element={<StudentReport />} />
         <Route path="/print-cards" element={<PrintCards />} />
       </Route>
       <Route path="*" element={<NotFound />} />
