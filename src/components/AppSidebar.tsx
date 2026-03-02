@@ -14,8 +14,8 @@ const navItems = [
   { to: "/cards", icon: CreditCard, label: "卡片分配" },
   { to: "/print-cards", icon: Printer, label: "打印卡片" },
   { to: "/statistics", icon: BarChart3, label: "答题统计" },
-  { to: "/present", icon: Monitor, label: "PC 展示" },
-  { to: "/scan", icon: Smartphone, label: "手机扫描" },
+  { to: "/present", icon: Monitor, label: "发布测试" },
+  { to: "/scan", icon: Smartphone, label: "扫描读卡" },
 ];
 
 export function AppSidebar() {
