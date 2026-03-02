@@ -85,6 +85,13 @@ const Students = () => {
 
   const handleImportClick = () => fileInputRef.current?.click();
 
+  const validateStudentInput = (name: string, student_no: string): string | null => {
+    if (!name.trim()) return "姓名不能为空";
+    if (name.trim().length > 100) return `姓名"${name.slice(0, 20)}..."超过100字符限制`;
+    if (student_no.trim().length > 50) return `学号"${student_no.slice(0, 20)}..."超过50字符限制`;
+    return null;
+  };
+
   const parseStudentLines = (text: string): { student_no: string; name: string }[] => {
     const lines = text.split(/\r?\n/).filter((l) => l.trim());
     const startIdx = lines[0]?.includes("学号") || lines[0]?.includes("姓名") || lines[0]?.includes("序号") ? 1 : 0;
@@ -93,23 +100,18 @@ const Students = () => {
     for (let i = startIdx; i < lines.length; i++) {
       const line = lines[i].trim();
       if (!line) continue;
-      // Try splitting by comma, tab, or Chinese comma
       const cols = line.split(/[,\t，]/).map((c) => c.trim()).filter(Boolean);
       if (cols.length >= 2) {
-        // Two or more columns: first is student_no, second is name (or vice versa)
-        // Heuristic: if first col is all digits, treat as student_no
         const isFirstDigit = /^\d+$/.test(cols[0]);
         result.push({
-          student_no: isFirstDigit ? cols[0] : cols[1],
-          name: isFirstDigit ? cols[1] : cols[0],
+          student_no: (isFirstDigit ? cols[0] : cols[1]).slice(0, 50),
+          name: (isFirstDigit ? cols[1] : cols[0]).slice(0, 100),
         });
       } else {
-        // Single column: treat as name, auto-number
-        result.push({ student_no: "", name: cols[0] });
+        result.push({ student_no: "", name: cols[0].slice(0, 100) });
       }
     }
 
-    // Auto-number entries without student_no
     const existingCount = students.length;
     result.forEach((r, idx) => {
       if (!r.student_no) {
@@ -141,11 +143,24 @@ const Students = () => {
       toast({ title: "导入失败", description: "未识别到有效数据，每行一个姓名，或使用「学号,姓名」格式", variant: "destructive" });
       return;
     }
-    const toInsert = parsed.map((p, idx) => ({
+    const validationErrors: string[] = [];
+    const validParsed = parsed.filter((p) => {
+      const err = validateStudentInput(p.name, p.student_no);
+      if (err) { validationErrors.push(err); return false; }
+      return true;
+    });
+    if (validationErrors.length > 0 && validParsed.length === 0) {
+      toast({ title: "导入失败", description: validationErrors[0], variant: "destructive" });
+      return;
+    }
+    if (validationErrors.length > 0) {
+      toast({ title: "部分跳过", description: `${validationErrors.length} 条记录因格式问题被跳过` });
+    }
+    const toInsert = validParsed.map((p, idx) => ({
       user_id: user.id,
       class_id: targetClassId,
-      student_no: p.student_no,
-      name: p.name,
+      student_no: p.student_no.trim(),
+      name: p.name.trim(),
       card_no: students.length + idx + 1,
     }));
     const { error } = await supabase.from("students").insert(toInsert);
@@ -194,11 +209,13 @@ const Students = () => {
 
   const handleAdd = async () => {
     if (!addName.trim() || !addStudentNo.trim() || !addClassId || !user) return;
+    const validErr = validateStudentInput(addName, addStudentNo);
+    if (validErr) { toast({ title: "输入错误", description: validErr, variant: "destructive" }); return; }
     const { error } = await supabase.from("students").insert({
       user_id: user.id,
       class_id: addClassId,
-      name: addName.trim(),
-      student_no: addStudentNo.trim(),
+      name: addName.trim().slice(0, 100),
+      student_no: addStudentNo.trim().slice(0, 50),
       card_no: students.length + 1,
     });
     if (error) { toast({ title: "错误", description: error.message, variant: "destructive" }); return; }
