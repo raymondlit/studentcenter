@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { ArrowLeft, FileText, BarChart3, CheckCircle2, XCircle, Users, Trophy } from "lucide-react";
+import { ArrowLeft, FileText, BarChart3, CheckCircle2, XCircle, Users, Trophy, Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -149,29 +149,48 @@ const PaperReport = () => {
     ? Math.round(questionStats.reduce((sum, q) => sum + (q.total > 0 ? (q.correct / q.total) * 100 : 0), 0) / questionStats.length)
     : 0;
 
+  const handleExportPDF = () => {
+    window.print();
+  };
+
+  const selectedClassName = selectedClassId === "all"
+    ? "全部班级"
+    : classes.find(c => c.id === selectedClassId)?.name || "";
+
   return (
-    <div className="space-y-6 max-w-2xl mx-auto">
+    <div className="space-y-6 max-w-2xl mx-auto print:max-w-none print:p-0">
       {/* Header */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 print:hidden">
         <Button variant="ghost" size="icon" onClick={() => navigate("/statistics")} className="shrink-0">
           <ArrowLeft className="w-5 h-5" />
         </Button>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <h1 className="text-2xl font-display font-bold truncate">{paperName}</h1>
           <p className="text-sm text-muted-foreground">试卷报告 · {totalQ} 道题</p>
         </div>
+        <Button variant="outline" size="sm" onClick={handleExportPDF} className="shrink-0 gap-1.5">
+          <Printer className="w-4 h-4" />导出PDF
+        </Button>
+      </div>
+
+      {/* Print-only header */}
+      <div className="hidden print:block print:mb-6">
+        <h1 className="text-xl font-bold text-center">{paperName} — 试卷报告</h1>
+        <p className="text-sm text-center text-muted-foreground mt-1">{selectedClassName} · {totalQ} 道题 · {new Date().toLocaleDateString("zh-CN")}</p>
       </div>
 
       {/* Class filter */}
-      <Select value={selectedClassId} onValueChange={setSelectedClassId}>
-        <SelectTrigger className="w-40">
-          <SelectValue placeholder="选择班级" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">全部班级</SelectItem>
-          {classes.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
-        </SelectContent>
-      </Select>
+      <div className="print:hidden">
+        <Select value={selectedClassId} onValueChange={setSelectedClassId}>
+          <SelectTrigger className="w-40">
+            <SelectValue placeholder="选择班级" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">全部班级</SelectItem>
+            {classes.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
 
       {/* Summary */}
       <div className="grid grid-cols-2 gap-3">
