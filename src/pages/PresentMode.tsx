@@ -1,10 +1,10 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   Monitor, Eye, EyeOff, Users, Play, Square, BarChart3,
-  ArrowLeft, Copy, ChevronRight, FileText
+  ArrowLeft, Smartphone, ChevronRight, FileText
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -15,6 +15,8 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { QRCodeSVG } from "qrcode.react";
 
 const optionLabels = ["A", "B", "C", "D"];
 const optionColors = [
@@ -227,10 +229,14 @@ function FullscreenPresenter({
   const statsVisible = liveMode || showResults;
 
   const sessionLink = `${window.location.origin}/scan?session=${sessionId}`;
-  const copyLink = () => {
-    navigator.clipboard.writeText(sessionLink);
-    toast({ title: "已复制", description: "手机端扫描链接已复制到剪贴板" });
-  };
+  const linkBtnRef = useRef<HTMLButtonElement>(null);
+  const [btnWidth, setBtnWidth] = useState(120);
+
+  useEffect(() => {
+    if (linkBtnRef.current) {
+      setBtnWidth(linkBtnRef.current.offsetWidth);
+    }
+  });
 
   return (
     <div className="fixed inset-0 z-50 bg-background flex flex-col">
@@ -257,9 +263,19 @@ function FullscreenPresenter({
           </Button>
         )}
 
-        <Button variant="outline" size="sm" onClick={copyLink}>
-          <Copy className="w-4 h-4 mr-1" />手机端链接
-        </Button>
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button ref={linkBtnRef} variant="outline" size="sm">
+              <Smartphone className="w-4 h-4 mr-1" />手机端链接
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-auto p-3" align="end">
+            <div className="flex flex-col items-center gap-2">
+              <QRCodeSVG value={sessionLink} size={btnWidth} level="L" />
+              <p className="text-xs text-muted-foreground text-center max-w-[200px] truncate">{sessionLink}</p>
+            </div>
+          </PopoverContent>
+        </Popover>
 
         {onNext && (
           <Button variant="default" size="sm" onClick={onNext}>
