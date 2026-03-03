@@ -14,7 +14,7 @@ import Statistics from "./pages/Statistics";
 import ScanMode from "./pages/ScanMode";
 import PresentMode from "./pages/PresentMode";
 import Papers from "./pages/Papers";
-import PrintCards from "./pages/PrintCards";
+
 import SessionDetail from "./pages/SessionDetail";
 import PaperReport from "./pages/PaperReport";
 import StudentReport from "./pages/StudentReport";
@@ -51,7 +51,7 @@ function ProtectedRoutes() {
         <Route path="/session/:sessionId" element={<SessionDetail />} />
         <Route path="/paper-report/:paperId" element={<PaperReport />} />
         <Route path="/student-report/:studentId" element={<StudentReport />} />
-        <Route path="/print-cards" element={<PrintCards />} />
+        
       </Route>
       <Route path="*" element={<NotFound />} />
     </Routes>
