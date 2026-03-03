@@ -2,7 +2,7 @@ import { useState } from "react";
 import { NavLink } from "@/components/NavLink";
 import { 
   LayoutDashboard, Users, GraduationCap, FileQuestion, 
-  BarChart3, Smartphone, CreditCard, Printer, Menu, X, Monitor, FileText
+  BarChart3, Smartphone, CreditCard, Menu, X, Monitor, FileText
 } from "lucide-react";
 
 const navItems = [
@@ -11,8 +11,7 @@ const navItems = [
   { to: "/students", icon: Users, label: "学生管理" },
   { to: "/questions", icon: FileQuestion, label: "题目管理" },
   { to: "/papers", icon: FileText, label: "试卷管理" },
-  { to: "/cards", icon: CreditCard, label: "卡片分配" },
-  { to: "/print-cards", icon: Printer, label: "打印卡片" },
+  { to: "/cards", icon: CreditCard, label: "卡片管理" },
   { to: "/statistics", icon: BarChart3, label: "答题统计" },
   { to: "/present", icon: Monitor, label: "PC 展示" },
   { to: "/scan", icon: Smartphone, label: "手机扫描" },
