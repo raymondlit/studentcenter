@@ -19,6 +19,7 @@ import SessionDetail from "./pages/SessionDetail";
 import PaperReport from "./pages/PaperReport";
 import StudentReport from "./pages/StudentReport";
 import Auth from "./pages/Auth";
+import AutoLogin from "./pages/AutoLogin";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -74,6 +75,7 @@ const App = () => (
         <BrowserRouter>
           <Routes>
             <Route path="/auth" element={<AuthRoute />} />
+            <Route path="/auto-login" element={<AutoLogin />} />
             <Route path="/*" element={<ProtectedRoutes />} />
           </Routes>
         </BrowserRouter>
