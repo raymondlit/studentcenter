@@ -1,23 +1,20 @@
 import { useRef, useEffect, useState, useCallback } from "react";
-import jsQR from "jsqr";
-import { Camera, CameraOff, SwitchCamera, Zap } from "lucide-react";
+import { Camera, CameraOff, SwitchCamera, Zap, Image as ImageIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { scanWithZBar } from "@/lib/zbar-scanner";
+import {
+  ANSWER_LABELS,
+  detectAnswerFromPoints,
+  parseQRValue,
+  type ScanEvent,
+} from "@/lib/qr-utils";
 
-const ANSWER_LABELS = ["A", "B", "C", "D"];
+// Re-export for consumers
+export type { ScanEvent };
 
-// 处理分辨率：在手机上提高采样质量，同时控制 CPU 压力
-const PROCESS_WIDTH_HIGH_QUALITY = 960;
-// 单帧最多尝试识别的二维码数量
-const MAX_CODES_PER_FRAME = 20;
-// UI 刷新节流，避免高频 setState 拖慢扫描
-
-interface ScanEvent {
-  cardNo: number;
-  studentNo: string;
-  answer: number;
-  answerLabel: string;
-}
+/** High-res photo capture interval (ms) */
+const PHOTO_INTERVAL_MS = 1500;
 
 interface CameraScannerProps {
   onScan: (event: ScanEvent) => void;
@@ -25,76 +22,20 @@ interface CameraScannerProps {
   compact?: boolean;
 }
 
-function detectAnswer(location: {
-  topLeftCorner: { x: number; y: number };
-  topRightCorner: { x: number; y: number };
-}): number {
-  const dx = location.topRightCorner.x - location.topLeftCorner.x;
-  const dy = location.topRightCorner.y - location.topLeftCorner.y;
-  let angle = (Math.atan2(dy, dx) * 180) / Math.PI;
-  if (angle < 0) angle += 360;
-  if (angle < 45 || angle >= 315) return 0;
-  if (angle < 135) return 1;
-  if (angle < 225) return 2;
-  return 3;
-}
-
-function parseQRValue(value: string): { studentNo: string; cardNo: number } | null {
-  // 兼容旧格式: STU-<studentNo>-<cardNo>
-  const legacy = value.match(/^STU-(.+)-(\d+)$/);
-  if (legacy) return { studentNo: legacy[1], cardNo: parseInt(legacy[2], 10) };
-
-  // 新简化格式: S:<studentNo>:<cardNo>（更短，二维码密度更低）
-  const compact = value.match(/^S:([^:]+):(\d+)$/);
-  if (compact) return { studentNo: compact[1], cardNo: parseInt(compact[2], 10) };
-
-  return null;
-}
-
-/**
- * 遮盖二维码区域，避免同一帧重复识别。
- * 同时写回 canvas 与 imageData，避免每次循环重复 getImageData。
- */
-function maskQRRegion(
-  ctx: CanvasRenderingContext2D,
-  imageData: ImageData,
-  location: { topLeftCorner: { x: number; y: number }; topRightCorner: { x: number; y: number }; bottomLeftCorner: { x: number; y: number }; bottomRightCorner: { x: number; y: number } },
-  padding = 12
-) {
-  const xs = [location.topLeftCorner.x, location.topRightCorner.x, location.bottomLeftCorner.x, location.bottomRightCorner.x];
-  const ys = [location.topLeftCorner.y, location.topRightCorner.y, location.bottomLeftCorner.y, location.bottomRightCorner.y];
-  const minX = Math.max(0, Math.floor(Math.min(...xs) - padding));
-  const minY = Math.max(0, Math.floor(Math.min(...ys) - padding));
-  const maxX = Math.min(imageData.width, Math.ceil(Math.max(...xs) + padding));
-  const maxY = Math.min(imageData.height, Math.ceil(Math.max(...ys) + padding));
-
-  ctx.fillStyle = "#FFFFFF";
-  ctx.fillRect(minX, minY, maxX - minX, maxY - minY);
-
-  const data = imageData.data;
-  const stride = imageData.width * 4;
-  for (let y = minY; y < maxY; y++) {
-    let row = y * stride + minX * 4;
-    for (let x = minX; x < maxX; x++) {
-      data[row] = 255;
-      data[row + 1] = 255;
-      data[row + 2] = 255;
-      data[row + 3] = 255;
-      row += 4;
-    }
-  }
-}
-
 export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number>(0);
-  // Per-code cooldown map: cardNo -> last scan timestamp
   const cooldownMapRef = useRef<Map<string, number>>(new Map());
   const mountedRef = useRef(true);
   const onScanRef = useRef(onScan);
   onScanRef.current = onScan;
+
+  // ImageCapture for high-res photo channel
+  const imageCaptureRef = useRef<ImageCapture | null>(null);
+  const photoTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const photoProcessingRef = useRef(false);
 
   const [active, setActive] = useState(false);
   const [facingMode, setFacingMode] = useState<"environment" | "user">("environment");
@@ -103,12 +44,49 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
   const [cameraReady, setCameraReady] = useState(false);
   const [scanCount, setScanCount] = useState(0);
   const [fps, setFps] = useState(0);
+  const [photoMode, setPhotoMode] = useState(false); // Whether high-res capture is active
   const scanCountRef = useRef(0);
   const uiLastSyncRef = useRef(0);
+
+  /**
+   * Process detected QR codes from zbar results.
+   * Handles cooldown, answer detection, and event dispatch.
+   */
+  const processResults = useCallback(
+    (results: { data: string; points: { x: number; y: number }[] }[], now: number) => {
+      const cooldownMap = cooldownMapRef.current;
+      for (const r of results) {
+        const parsed = parseQRValue(r.data);
+        if (!parsed) continue;
+
+        const key = `${parsed.studentNo}-${parsed.cardNo}`;
+        const lastTime = cooldownMap.get(key) || 0;
+        if (now - lastTime < 1200) continue;
+
+        const answer = detectAnswerFromPoints(r.points);
+        cooldownMap.set(key, now);
+        scanCountRef.current += 1;
+        setLastResult(`#${parsed.cardNo} → ${ANSWER_LABELS[answer]}`);
+
+        onScanRef.current({
+          cardNo: parsed.cardNo,
+          studentNo: parsed.studentNo,
+          answer,
+          answerLabel: ANSWER_LABELS[answer],
+        });
+      }
+    },
+    []
+  );
 
   const stopStream = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
     rafRef.current = 0;
+    if (photoTimerRef.current) {
+      clearInterval(photoTimerRef.current);
+      photoTimerRef.current = null;
+    }
+    imageCaptureRef.current = null;
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
@@ -117,102 +95,151 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
       videoRef.current.srcObject = null;
     }
     setCameraReady(false);
+    setPhotoMode(false);
   }, []);
 
-  const startCamera = useCallback(async (facing: "environment" | "user") => {
-    stopStream();
-    setError(null);
-    setCameraReady(false);
-
-    await new Promise(r => setTimeout(r, 500));
-    if (!mountedRef.current) return;
-
-    const video = videoRef.current;
-    if (!video) {
-      setError("摄像头初始化失败，请重试");
-      setActive(false);
-      return;
-    }
-
-    video.srcObject = null;
-
-    // Request high resolution + fps hints for better multi-QR detection
-    const constraints: MediaStreamConstraints[] = [
-      { video: { facingMode: { exact: facing }, width: { ideal: 2560 }, height: { ideal: 1440 }, frameRate: { ideal: 30, max: 60 } }, audio: false },
-      { video: { facingMode: facing, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } }, audio: false },
-      { video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
-      { video: true, audio: false },
-    ];
-
-    let stream: MediaStream | null = null;
-    let lastErr: any = null;
-    for (const c of constraints) {
-      try {
-        stream = await navigator.mediaDevices.getUserMedia(c);
-        break;
-      } catch (e) {
-        lastErr = e;
-        continue;
-      }
-    }
-
-    if (!stream) {
-      const msg = lastErr?.name === "NotAllowedError"
-        ? "摄像头权限被拒绝，请在浏览器设置中允许摄像头访问"
-        : lastErr?.name === "NotFoundError"
-        ? "未检测到摄像头设备"
-        : "无法打开摄像头，请检查权限设置";
-      setError(msg);
-      setActive(false);
-      return;
-    }
-
-    if (!mountedRef.current) {
-      stream.getTracks().forEach(t => t.stop());
-      return;
-    }
-
-    streamRef.current = stream;
-    video.srcObject = stream;
-    video.setAttribute("playsinline", "true");
-    video.setAttribute("webkit-playsinline", "true");
-    video.muted = true;
-
-    try {
-      await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => { cleanup(); reject(new Error("摄像头加载超时")); }, 10000);
-        const cleanup = () => {
-          clearTimeout(timeout);
-          video.removeEventListener("loadedmetadata", onLoaded);
-          video.removeEventListener("canplay", onCanPlay);
-          video.removeEventListener("error", onErr);
-        };
-        const onLoaded = () => { if (video.videoWidth > 0) { cleanup(); resolve(); } };
-        const onCanPlay = () => { cleanup(); resolve(); };
-        const onErr = () => { cleanup(); reject(new Error("Video load failed")); };
-        if (video.readyState >= 2) { cleanup(); resolve(); }
-        else {
-          video.addEventListener("loadedmetadata", onLoaded);
-          video.addEventListener("canplay", onCanPlay);
-          video.addEventListener("error", onErr);
-        }
-      });
-
-      await video.play();
-
-      if (mountedRef.current) {
-        setCameraReady(true);
-        setActive(true);
-        setScanCount(0);
-        console.log("Camera started, resolution:", video.videoWidth, "x", video.videoHeight);
-      }
-    } catch (err: any) {
-      console.error("Camera play error:", err);
-      setError("摄像头启动失败：" + (err.message || "未知错误"));
-      setActive(false);
+  const startCamera = useCallback(
+    async (facing: "environment" | "user") => {
       stopStream();
-    }
-  }, [stopStream]);
+      setError(null);
+      setCameraReady(false);
+
+      await new Promise((r) => setTimeout(r, 500));
+      if (!mountedRef.current) return;
+
+      const video = videoRef.current;
+      if (!video) {
+        setError("摄像头初始化失败，请重试");
+        setActive(false);
+        return;
+      }
+
+      video.srcObject = null;
+
+      // Request highest possible resolution for both stream and photo capture
+      const constraints: MediaStreamConstraints[] = [
+        {
+          video: {
+            facingMode: { exact: facing },
+            width: { ideal: 3840 },
+            height: { ideal: 2160 },
+            frameRate: { ideal: 30, max: 60 },
+          },
+          audio: false,
+        },
+        {
+          video: {
+            facingMode: facing,
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            frameRate: { ideal: 30 },
+          },
+          audio: false,
+        },
+        {
+          video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false,
+        },
+        { video: true, audio: false },
+      ];
+
+      let stream: MediaStream | null = null;
+      let lastErr: any = null;
+      for (const c of constraints) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia(c);
+          break;
+        } catch (e) {
+          lastErr = e;
+          continue;
+        }
+      }
+
+      if (!stream) {
+        const msg =
+          lastErr?.name === "NotAllowedError"
+            ? "摄像头权限被拒绝，请在浏览器设置中允许摄像头访问"
+            : lastErr?.name === "NotFoundError"
+            ? "未检测到摄像头设备"
+            : "无法打开摄像头，请检查权限设置";
+        setError(msg);
+        setActive(false);
+        return;
+      }
+
+      if (!mountedRef.current) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
+
+      streamRef.current = stream;
+      video.srcObject = stream;
+      video.setAttribute("playsinline", "true");
+      video.setAttribute("webkit-playsinline", "true");
+      video.muted = true;
+
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            cleanup();
+            reject(new Error("摄像头加载超时"));
+          }, 10000);
+          const cleanup = () => {
+            clearTimeout(timeout);
+            video.removeEventListener("loadedmetadata", onLoaded);
+            video.removeEventListener("canplay", onCanPlay);
+            video.removeEventListener("error", onErr);
+          };
+          const onLoaded = () => {
+            if (video.videoWidth > 0) { cleanup(); resolve(); }
+          };
+          const onCanPlay = () => { cleanup(); resolve(); };
+          const onErr = () => { cleanup(); reject(new Error("Video load failed")); };
+          if (video.readyState >= 2) { cleanup(); resolve(); }
+          else {
+            video.addEventListener("loadedmetadata", onLoaded);
+            video.addEventListener("canplay", onCanPlay);
+            video.addEventListener("error", onErr);
+          }
+        });
+
+        await video.play();
+
+        if (mountedRef.current) {
+          setCameraReady(true);
+          setActive(true);
+          setScanCount(0);
+          scanCountRef.current = 0;
+
+          // Set up ImageCapture for high-res photo channel
+          const videoTrack = stream.getVideoTracks()[0];
+          if (typeof ImageCapture !== "undefined" && videoTrack) {
+            try {
+              const ic = new ImageCapture(videoTrack);
+              imageCaptureRef.current = ic;
+              setPhotoMode(true);
+              console.log("ImageCapture available, high-res photo mode enabled");
+            } catch {
+              console.log("ImageCapture not supported, using video stream only");
+            }
+          }
+
+          console.log(
+            "Camera started, stream resolution:",
+            video.videoWidth,
+            "x",
+            video.videoHeight
+          );
+        }
+      } catch (err: any) {
+        console.error("Camera play error:", err);
+        setError("摄像头启动失败：" + (err.message || "未知错误"));
+        setActive(false);
+        stopStream();
+      }
+    },
+    [stopStream]
+  );
 
   const toggleCamera = useCallback(() => {
     if (active) { stopStream(); setActive(false); }
@@ -227,10 +254,13 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
 
   useEffect(() => {
     mountedRef.current = true;
-    return () => { mountedRef.current = false; stopStream(); };
+    return () => {
+      mountedRef.current = false;
+      stopStream();
+    };
   }, [stopStream]);
 
-  // Multi-QR scanning loop with downscaling and iterative detection
+  // ─── Real-time video stream scanning (zbar-wasm, full resolution) ───
   useEffect(() => {
     if (!cameraReady) return;
     const video = videoRef.current;
@@ -243,56 +273,32 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
     let frameCount = 0;
     let lastFpsTime = performance.now();
 
-    const scan = () => {
+    const scan = async () => {
       if (!running) return;
       if (video.readyState !== video.HAVE_ENOUGH_DATA) {
         rafRef.current = requestAnimationFrame(scan);
         return;
       }
 
-      // 保持较高采样分辨率，同时避免超大帧拖慢手机 CPU
-      const processWidth = Math.min(PROCESS_WIDTH_HIGH_QUALITY, video.videoWidth || PROCESS_WIDTH_HIGH_QUALITY);
-      const scale = Math.min(1, processWidth / video.videoWidth);
-      const w = Math.round(video.videoWidth * scale);
-      const h = Math.round(video.videoHeight * scale);
+      // Use full video resolution (no downscaling) for maximum detection distance
+      const w = video.videoWidth;
+      const h = video.videoHeight;
       canvas.width = w;
       canvas.height = h;
       ctx.drawImage(video, 0, 0, w, h);
 
-      // 只在每帧读取一次像素数据，循环中直接在同一 buffer 上遮盖
       const now = Date.now();
-      const imageData = ctx.getImageData(0, 0, w, h);
-      const cooldownMap = cooldownMapRef.current;
-
-      for (let i = 0; i < MAX_CODES_PER_FRAME; i++) {
-        const code = jsQR(imageData.data, w, h, { inversionAttempts: "attemptBoth" });
-        if (!code || !code.data) break;
-
-        // 遮盖当前二维码，继续识别同一帧中的其他码
-        maskQRRegion(ctx, imageData, code.location);
-
-        const parsed = parseQRValue(code.data);
-        if (!parsed) continue;
-
-        const key = `${parsed.studentNo}-${parsed.cardNo}`;
-        const lastTime = cooldownMap.get(key) || 0;
-        if (now - lastTime < 1500) continue; // 缩短冷却，允许更快批量识别
-
-        const answer = detectAnswer(code.location);
-        cooldownMap.set(key, now);
-
-        scanCountRef.current += 1;
-        setLastResult(`#${parsed.cardNo} → ${ANSWER_LABELS[answer]}`);
-
-        onScanRef.current({
-          cardNo: parsed.cardNo,
-          studentNo: parsed.studentNo,
-          answer,
-          answerLabel: ANSWER_LABELS[answer],
-        });
+      try {
+        const imageData = ctx.getImageData(0, 0, w, h);
+        const results = await scanWithZBar(imageData);
+        if (running) {
+          processResults(results, now);
+        }
+      } catch (err) {
+        // zbar-wasm may throw on corrupt frames; just skip
       }
 
-      // FPS + 计数 UI 节流更新，降低 React 重渲染开销
+      // FPS tracking
       frameCount++;
       const elapsed = performance.now() - lastFpsTime;
       if (elapsed >= 1000) {
@@ -301,24 +307,77 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
         lastFpsTime = performance.now();
       }
 
+      // UI throttled update
       if (now - uiLastSyncRef.current > 180) {
         setScanCount(scanCountRef.current);
         uiLastSyncRef.current = now;
       }
 
-      // Clean up old cooldowns (> 10s)
+      // Clean old cooldowns
       if (frameCount === 0) {
+        const cooldownMap = cooldownMapRef.current;
         cooldownMap.forEach((time, key) => {
           if (now - time > 10000) cooldownMap.delete(key);
         });
       }
 
-      rafRef.current = requestAnimationFrame(scan);
+      if (running) {
+        rafRef.current = requestAnimationFrame(scan);
+      }
     };
 
     rafRef.current = requestAnimationFrame(scan);
-    return () => { running = false; cancelAnimationFrame(rafRef.current); };
-  }, [cameraReady]);
+    return () => {
+      running = false;
+      cancelAnimationFrame(rafRef.current);
+    };
+  }, [cameraReady, processResults]);
+
+  // ─── High-res photo capture channel (ImageCapture API) ───
+  useEffect(() => {
+    if (!cameraReady || !photoMode) return;
+
+    const captureAndScan = async () => {
+      const ic = imageCaptureRef.current;
+      if (!ic || photoProcessingRef.current) return;
+
+      photoProcessingRef.current = true;
+      try {
+        // takePhoto() returns a Blob at the sensor's full resolution (often 8-12MP)
+        const blob = await ic.takePhoto();
+        const bitmap = await createImageBitmap(blob);
+
+        const offCanvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+        const offCtx = offCanvas.getContext("2d")!;
+        offCtx.drawImage(bitmap, 0, 0);
+        const imageData = offCtx.getImageData(0, 0, bitmap.width, bitmap.height);
+        bitmap.close();
+
+        const results = await scanWithZBar(imageData);
+        if (mountedRef.current && results.length > 0) {
+          console.log(
+            `[HighRes] ${bitmap.width}x${bitmap.height} → ${results.length} codes detected`
+          );
+          processResults(results, Date.now());
+        }
+      } catch (err) {
+        // ImageCapture may fail if camera is busy; silently retry next interval
+      } finally {
+        photoProcessingRef.current = false;
+      }
+    };
+
+    photoTimerRef.current = setInterval(captureAndScan, PHOTO_INTERVAL_MS);
+    // Run first capture immediately
+    captureAndScan();
+
+    return () => {
+      if (photoTimerRef.current) {
+        clearInterval(photoTimerRef.current);
+        photoTimerRef.current = null;
+      }
+    };
+  }, [cameraReady, photoMode, processResults]);
 
   return (
     <div className="flex flex-col h-full">
@@ -346,6 +405,12 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
                 <Badge variant="secondary" className="bg-black/60 text-white border-0 text-xs">
                   已扫 {scanCount}
                 </Badge>
+                {photoMode && (
+                  <Badge variant="secondary" className="bg-emerald-600/80 text-white border-0 text-xs">
+                    <ImageIcon className="w-3 h-3 mr-1" />
+                    高清模式
+                  </Badge>
+                )}
               </div>
               {lastResult && (
                 <div className="absolute bottom-3 left-1/2 -translate-x-1/2 bg-primary/90 text-primary-foreground text-sm font-bold px-4 py-1.5 rounded-full">
@@ -355,10 +420,20 @@ export function CameraScanner({ onScan, disabled, compact }: CameraScannerProps)
             </div>
             {/* Controls overlay */}
             <div className="absolute top-3 right-3 flex gap-2">
-              <Button variant="secondary" size="icon" onClick={switchFacing} className="bg-black/50 hover:bg-black/70 text-white border-0 h-9 w-9">
+              <Button
+                variant="secondary"
+                size="icon"
+                onClick={switchFacing}
+                className="bg-black/50 hover:bg-black/70 text-white border-0 h-9 w-9"
+              >
                 <SwitchCamera className="w-4 h-4" />
               </Button>
-              <Button variant="secondary" size="icon" onClick={toggleCamera} className="bg-destructive/80 hover:bg-destructive text-white border-0 h-9 w-9">
+              <Button
+                variant="secondary"
+                size="icon"
+                onClick={toggleCamera}
+                className="bg-destructive/80 hover:bg-destructive text-white border-0 h-9 w-9"
+              >
                 <CameraOff className="w-4 h-4" />
               </Button>
             </div>
