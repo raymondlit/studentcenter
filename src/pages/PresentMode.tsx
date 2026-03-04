@@ -179,6 +179,7 @@ function FullscreenPresenter({
   onEnd: () => void;
   onNext?: () => void;
 }) {
+  const { user } = useAuth();
   const { toast } = useToast();
   const [results, setResults] = useState<ScanResultRow[]>([]);
   const [showResults, setShowResults] = useState(false);
@@ -228,15 +229,34 @@ function FullscreenPresenter({
   const maxCount = Math.max(...counts, 1);
   const statsVisible = liveMode || showResults;
 
-  const sessionLink = `${window.location.origin}/scan?session=${sessionId}`;
   const linkBtnRef = useRef<HTMLButtonElement>(null);
   const [btnWidth, setBtnWidth] = useState(120);
+  const [autoLoginUrl, setAutoLoginUrl] = useState("");
 
   useEffect(() => {
     if (linkBtnRef.current) {
       setBtnWidth(linkBtnRef.current.offsetWidth);
     }
   });
+
+  // Generate auto-login token when session starts
+  useEffect(() => {
+    if (!user || !sessionId) return;
+    (async () => {
+      const redirectPath = `/scan?session=${sessionId}`;
+      const { data, error } = await (supabase as any)
+        .from("login_tokens")
+        .insert({ user_id: user.id, redirect_path: redirectPath })
+        .select("token")
+        .single();
+      if (error || !data) {
+        // Fallback to plain link
+        setAutoLoginUrl(`${window.location.origin}/scan?session=${sessionId}`);
+        return;
+      }
+      setAutoLoginUrl(`${window.location.origin}/auto-login?token=${data.token}`);
+    })();
+  }, [sessionId, user]);
 
   return (
     <div className="fixed inset-0 z-50 bg-background flex flex-col">
