@@ -291,8 +291,8 @@ function FullscreenPresenter({
           </PopoverTrigger>
           <PopoverContent className="w-auto p-3" align="end">
             <div className="flex flex-col items-center gap-2">
-              <QRCodeSVG value={sessionLink} size={btnWidth} level="L" />
-              <p className="text-xs text-muted-foreground text-center max-w-[200px] truncate">{sessionLink}</p>
+              <QRCodeSVG value={autoLoginUrl || `${window.location.origin}/scan?session=${sessionId}`} size={btnWidth} level="L" />
+              <p className="text-xs text-muted-foreground text-center max-w-[200px] truncate">扫码自动登录并加入</p>
             </div>
           </PopoverContent>
         </Popover>
