@@ -11,7 +11,40 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  const supabase = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+  );
+
   try {
+    // POST: record check-in
+    if (req.method === "POST") {
+      const { class_id, student_id } = await req.json();
+      if (!class_id || !student_id) {
+        return new Response(JSON.stringify({ error: "class_id and student_id required" }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const { error } = await supabase
+        .from("checkin_records")
+        .upsert({ class_id, student_id }, { onConflict: "class_id,student_id" });
+
+      if (error) {
+        console.error("checkin error:", error);
+        return new Response(JSON.stringify({ error: "Checkin failed" }), {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // GET: lookup students
     const url = new URL(req.url);
     const classId = url.searchParams.get("class_id");
     const query = url.searchParams.get("q")?.trim();
@@ -22,11 +55,6 @@ Deno.serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-    );
 
     let qb = supabase
       .from("students")
