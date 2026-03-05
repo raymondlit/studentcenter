@@ -14,6 +14,42 @@ export type Database = {
   }
   public: {
     Tables: {
+      checkin_records: {
+        Row: {
+          checked_in_at: string
+          class_id: string
+          id: string
+          student_id: string
+        }
+        Insert: {
+          checked_in_at?: string
+          class_id: string
+          id?: string
+          student_id: string
+        }
+        Update: {
+          checked_in_at?: string
+          class_id?: string
+          id?: string
+          student_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "checkin_records_class_id_fkey"
+            columns: ["class_id"]
+            isOneToOne: false
+            referencedRelation: "classes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "checkin_records_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       class_questions: {
         Row: {
           class_id: string
