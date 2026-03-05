@@ -71,10 +71,21 @@ const StudentCheckin = () => {
     }
   };
 
-  const handleSelect = (student: StudentInfo) => {
+  const handleSelect = async (student: StudentInfo) => {
     setSelected(student);
     setQuery(student.name);
     setShowSuggestions(false);
+    // Record check-in
+    try {
+      const url = `https://${projectId}.supabase.co/functions/v1/student-lookup`;
+      await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ class_id: classId, student_id: student.id }),
+      });
+    } catch {
+      // silently fail - check-in recording is best-effort
+    }
   };
 
   const handleReset = () => {

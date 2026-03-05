@@ -1,11 +1,12 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { CreditCard, QrCode, Printer, UserCheck, RotateCcw } from "lucide-react";
+import { CreditCard, QrCode, Printer, UserCheck, RotateCcw, CheckCircle2, XCircle, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
 import { QRCodeSVG } from "qrcode.react";
 
 interface StudentRow {
@@ -31,55 +32,139 @@ const QRCard = ({ student, index }: { student: StudentRow; index: number }) => {
   );
 };
 
-const CheckinTab = ({ classId }: { classId: string }) => {
+const CheckinTab = ({ classId, students }: { classId: string; students: StudentRow[] }) => {
   const [showQR, setShowQR] = useState(false);
+  const [checkedInIds, setCheckedInIds] = useState<Set<string>>(new Set());
+  const [showList, setShowList] = useState<"checked" | "unchecked" | null>(null);
+  const [loadingStats, setLoadingStats] = useState(false);
   const checkinUrl = classId
     ? `${window.location.origin}/checkin?c=${classId}`
     : "";
 
-  // Reset QR when class changes
+  // Reset when class changes
   useEffect(() => {
     setShowQR(false);
+    setShowList(null);
   }, [classId]);
+
+  // Fetch check-in records
+  useEffect(() => {
+    if (!classId) return;
+    const fetchCheckins = async () => {
+      setLoadingStats(true);
+      const { data } = await (supabase as any)
+        .from("checkin_records")
+        .select("student_id")
+        .eq("class_id", classId);
+      setCheckedInIds(new Set((data || []).map((r: any) => r.student_id)));
+      setLoadingStats(false);
+    };
+    fetchCheckins();
+
+    // Poll every 5 seconds for live updates
+    const interval = setInterval(fetchCheckins, 5000);
+    return () => clearInterval(interval);
+  }, [classId]);
+
+  const checkedStudents = students.filter(s => checkedInIds.has(s.id));
+  const uncheckedStudents = students.filter(s => !checkedInIds.has(s.id));
 
   if (!classId) {
     return <p className="text-center py-8 text-muted-foreground">请先选择班级</p>;
   }
 
   return (
-    <div className="bg-card rounded-xl p-6 shadow-card space-y-6">
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-lg gradient-accent flex items-center justify-center">
-          <UserCheck className="w-5 h-5 text-accent-foreground" />
-        </div>
-        <div>
-          <h2 className="font-semibold">签到领卡</h2>
-          <p className="text-sm text-muted-foreground">学生扫码后输入姓名即可获取答题二维码</p>
-        </div>
-      </div>
-
-      {!showQR ? (
-        <div className="flex flex-col items-center gap-4 py-8">
-          <p className="text-sm text-muted-foreground text-center">已选择班级，点击下方按钮生成签到二维码</p>
-          <Button onClick={() => setShowQR(true)} size="lg">
-            <QrCode className="w-5 h-5 mr-2" />
-            生成领卡二维码
-          </Button>
-        </div>
-      ) : (
-        <div className="flex flex-col items-center gap-4">
-          <div className="bg-background border-2 border-border rounded-2xl p-6">
-            <QRCodeSVG value={checkinUrl} size={240} level="M" includeMargin />
+    <div className="space-y-4">
+      {/* Stats Cards */}
+      {students.length > 0 && (
+        <div className="grid grid-cols-2 gap-3">
+          <div
+            onClick={() => setShowList(showList === "checked" ? null : "checked")}
+            className="bg-card rounded-xl p-4 shadow-card cursor-pointer hover:shadow-md transition-shadow"
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 text-emerald-500" />
+                <span className="text-sm text-muted-foreground">已签到</span>
+              </div>
+              {showList === "checked" ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+            </div>
+            <p className="text-3xl font-bold mt-2 text-foreground">{loadingStats ? "…" : checkedStudents.length}</p>
           </div>
-          <p className="text-sm text-muted-foreground text-center max-w-md">
-            将此二维码投影到屏幕上，学生用手机扫码后输入姓名，即可在手机上获取自己的答题二维码卡片，支持保存到本地。
-          </p>
-          <p className="text-xs font-mono text-muted-foreground break-all max-w-md text-center select-all">{checkinUrl}</p>
-          <Button variant="outline" size="sm" onClick={() => setShowQR(false)}>
-            <RotateCcw className="w-4 h-4 mr-1.5" />隐藏二维码
-          </Button>
+          <div
+            onClick={() => setShowList(showList === "unchecked" ? null : "unchecked")}
+            className="bg-card rounded-xl p-4 shadow-card cursor-pointer hover:shadow-md transition-shadow"
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <XCircle className="w-5 h-5 text-destructive" />
+                <span className="text-sm text-muted-foreground">未签到</span>
+              </div>
+              {showList === "unchecked" ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+            </div>
+            <p className="text-3xl font-bold mt-2 text-foreground">{loadingStats ? "…" : uncheckedStudents.length}</p>
+          </div>
         </div>
       )}
+
+      {/* Student List */}
+      {showList && (
+        <div className="bg-card rounded-xl p-4 shadow-card animate-fade-in">
+          <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">
+            {showList === "checked" ? (
+              <><CheckCircle2 className="w-4 h-4 text-emerald-500" />已签到名单</>
+            ) : (
+              <><XCircle className="w-4 h-4 text-destructive" />未签到名单</>
+            )}
+          </h3>
+          <div className="flex flex-wrap gap-2">
+            {(showList === "checked" ? checkedStudents : uncheckedStudents).map(s => (
+              <Badge key={s.id} variant={showList === "checked" ? "default" : "outline"} className="text-sm py-1 px-3">
+                {s.name}
+              </Badge>
+            ))}
+            {(showList === "checked" ? checkedStudents : uncheckedStudents).length === 0 && (
+              <p className="text-sm text-muted-foreground">暂无</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* QR Code Section */}
+      <div className="bg-card rounded-xl p-6 shadow-card space-y-6">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-lg gradient-accent flex items-center justify-center">
+            <UserCheck className="w-5 h-5 text-accent-foreground" />
+          </div>
+          <div>
+            <h2 className="font-semibold">签到领卡</h2>
+            <p className="text-sm text-muted-foreground">学生扫码后输入姓名即可获取答题二维码</p>
+          </div>
+        </div>
+
+        {!showQR ? (
+          <div className="flex flex-col items-center gap-4 py-8">
+            <p className="text-sm text-muted-foreground text-center">已选择班级，点击下方按钮生成签到二维码</p>
+            <Button onClick={() => setShowQR(true)} size="lg">
+              <QrCode className="w-5 h-5 mr-2" />
+              生成领卡二维码
+            </Button>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center gap-4">
+            <div className="bg-background border-2 border-border rounded-2xl p-6">
+              <QRCodeSVG value={checkinUrl} size={240} level="M" includeMargin />
+            </div>
+            <p className="text-sm text-muted-foreground text-center max-w-md">
+              将此二维码投影到屏幕上，学生用手机扫码后输入姓名，即可在手机上获取自己的答题二维码卡片，支持保存到本地。
+            </p>
+            <p className="text-xs font-mono text-muted-foreground break-all max-w-md text-center select-all">{checkinUrl}</p>
+            <Button variant="outline" size="sm" onClick={() => setShowQR(false)}>
+              <RotateCcw className="w-4 h-4 mr-1.5" />隐藏二维码
+            </Button>
+          </div>
+        )}
+      </div>
     </div>
   );
 };
@@ -213,7 +298,7 @@ const Cards = () => {
 
         {/* 签到领卡 */}
         <TabsContent value="checkin" className="print:hidden">
-          <CheckinTab classId={selectedClass} />
+          <CheckinTab classId={selectedClass} students={students} />
         </TabsContent>
       </Tabs>
     </div>
