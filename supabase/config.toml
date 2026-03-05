@@ -1,1 +1,7 @@
 project_id = "ohatadcqciafjhzdncjm"
+
+[functions.exchange-token]
+verify_jwt = false
+
+[functions.student-lookup]
+verify_jwt = false
