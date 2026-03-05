@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { CreditCard, QrCode, Printer, UserCheck } from "lucide-react";
+import { CreditCard, QrCode, Printer, UserCheck, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -32,9 +32,15 @@ const QRCard = ({ student, index }: { student: StudentRow; index: number }) => {
 };
 
 const CheckinTab = ({ classId }: { classId: string }) => {
+  const [showQR, setShowQR] = useState(false);
   const checkinUrl = classId
     ? `${window.location.origin}/checkin?c=${classId}`
     : "";
+
+  // Reset QR when class changes
+  useEffect(() => {
+    setShowQR(false);
+  }, [classId]);
 
   if (!classId) {
     return <p className="text-center py-8 text-muted-foreground">请先选择班级</p>;
@@ -52,15 +58,28 @@ const CheckinTab = ({ classId }: { classId: string }) => {
         </div>
       </div>
 
-      <div className="flex flex-col items-center gap-4">
-        <div className="bg-background border-2 border-border rounded-2xl p-6">
-          <QRCodeSVG value={checkinUrl} size={240} level="M" includeMargin />
+      {!showQR ? (
+        <div className="flex flex-col items-center gap-4 py-8">
+          <p className="text-sm text-muted-foreground text-center">已选择班级，点击下方按钮生成签到二维码</p>
+          <Button onClick={() => setShowQR(true)} size="lg">
+            <QrCode className="w-5 h-5 mr-2" />
+            生成领卡二维码
+          </Button>
         </div>
-        <p className="text-sm text-muted-foreground text-center max-w-md">
-          将此二维码投影到屏幕上，学生用手机扫码后输入姓名，即可在手机上获取自己的答题二维码卡片，支持保存到本地。
-        </p>
-        <p className="text-xs font-mono text-muted-foreground break-all max-w-md text-center select-all">{checkinUrl}</p>
-      </div>
+      ) : (
+        <div className="flex flex-col items-center gap-4">
+          <div className="bg-background border-2 border-border rounded-2xl p-6">
+            <QRCodeSVG value={checkinUrl} size={240} level="M" includeMargin />
+          </div>
+          <p className="text-sm text-muted-foreground text-center max-w-md">
+            将此二维码投影到屏幕上，学生用手机扫码后输入姓名，即可在手机上获取自己的答题二维码卡片，支持保存到本地。
+          </p>
+          <p className="text-xs font-mono text-muted-foreground break-all max-w-md text-center select-all">{checkinUrl}</p>
+          <Button variant="outline" size="sm" onClick={() => setShowQR(false)}>
+            <RotateCcw className="w-4 h-4 mr-1.5" />隐藏二维码
+          </Button>
+        </div>
+      )}
     </div>
   );
 };
@@ -168,11 +187,6 @@ const Cards = () => {
             ))}
           </div>
 
-        {/* 签到领卡 */}
-        <TabsContent value="checkin" className="print:hidden">
-          <CheckinTab classId={selectedClass} />
-        </TabsContent>
-
           <style>{`
             @media print {
               body * { visibility: hidden; }
@@ -195,6 +209,11 @@ const Cards = () => {
               }
             }
           `}</style>
+        </TabsContent>
+
+        {/* 签到领卡 */}
+        <TabsContent value="checkin" className="print:hidden">
+          <CheckinTab classId={selectedClass} />
         </TabsContent>
       </Tabs>
     </div>
