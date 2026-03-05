@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { CreditCard, QrCode, Printer } from "lucide-react";
+import { CreditCard, QrCode, Printer, UserCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -27,6 +27,40 @@ const QRCard = ({ student, index }: { student: StudentRow; index: number }) => {
       <span className="absolute top-1 left-2 text-xs font-mono font-bold opacity-60">#{String(cardNo).padStart(3, "0")}</span>
       <span className="absolute bottom-1 right-2 text-xs font-mono font-bold opacity-60">{student.name}</span>
       <QRCodeSVG value={qrValue} size={220} level="L" includeMargin={true} />
+    </div>
+  );
+};
+
+const CheckinTab = ({ classId }: { classId: string }) => {
+  const checkinUrl = classId
+    ? `${window.location.origin}/checkin?c=${classId}`
+    : "";
+
+  if (!classId) {
+    return <p className="text-center py-8 text-muted-foreground">请先选择班级</p>;
+  }
+
+  return (
+    <div className="bg-card rounded-xl p-6 shadow-card space-y-6">
+      <div className="flex items-center gap-3">
+        <div className="w-10 h-10 rounded-lg gradient-accent flex items-center justify-center">
+          <UserCheck className="w-5 h-5 text-accent-foreground" />
+        </div>
+        <div>
+          <h2 className="font-semibold">签到领卡</h2>
+          <p className="text-sm text-muted-foreground">学生扫码后输入姓名即可获取答题二维码</p>
+        </div>
+      </div>
+
+      <div className="flex flex-col items-center gap-4">
+        <div className="bg-background border-2 border-border rounded-2xl p-6">
+          <QRCodeSVG value={checkinUrl} size={240} level="M" includeMargin />
+        </div>
+        <p className="text-sm text-muted-foreground text-center max-w-md">
+          将此二维码投影到屏幕上，学生用手机扫码后输入姓名，即可在手机上获取自己的答题二维码卡片，支持保存到本地。
+        </p>
+        <p className="text-xs font-mono text-muted-foreground break-all max-w-md text-center select-all">{checkinUrl}</p>
+      </div>
     </div>
   );
 };
@@ -79,6 +113,7 @@ const Cards = () => {
         <TabsList className="print:hidden">
           <TabsTrigger value="assign"><QrCode className="w-4 h-4 mr-1.5" />卡片分配</TabsTrigger>
           <TabsTrigger value="print"><Printer className="w-4 h-4 mr-1.5" />打印卡片</TabsTrigger>
+          <TabsTrigger value="checkin"><UserCheck className="w-4 h-4 mr-1.5" />签到领卡</TabsTrigger>
         </TabsList>
 
         {/* 卡片分配 */}
@@ -132,6 +167,11 @@ const Cards = () => {
               </div>
             ))}
           </div>
+
+        {/* 签到领卡 */}
+        <TabsContent value="checkin" className="print:hidden">
+          <CheckinTab classId={selectedClass} />
+        </TabsContent>
 
           <style>{`
             @media print {

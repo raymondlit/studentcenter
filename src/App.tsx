@@ -20,6 +20,7 @@ import PaperReport from "./pages/PaperReport";
 import StudentReport from "./pages/StudentReport";
 import Auth from "./pages/Auth";
 import AutoLogin from "./pages/AutoLogin";
+import StudentCheckin from "./pages/StudentCheckin";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -76,6 +77,7 @@ const App = () => (
           <Routes>
             <Route path="/auth" element={<AuthRoute />} />
             <Route path="/auto-login" element={<AutoLogin />} />
+            <Route path="/checkin" element={<StudentCheckin />} />
             <Route path="/*" element={<ProtectedRoutes />} />
           </Routes>
         </BrowserRouter>
